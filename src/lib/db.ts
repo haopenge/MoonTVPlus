@@ -82,17 +82,40 @@ function getD1Adapter(): any {
     });
   }
 
-  // 开发环境：better-sqlite3
-  const Database = require('better-sqlite3');
-  const path = require('path');
+  // 开发环境：better-sqlite3 - 延迟加载以避免构建时的编译错误
+  let db;
+  try {
+    // 只在运行时加载 better-sqlite3，避免构建时的编译问题
+    const Database = require('better-sqlite3');
+    const path = require('path');
 
-  const dbPath = path.join(process.cwd(), '.data', 'moontv.db');
+    // 检查是否在 Edge Runtime 环境中
+    const isEdgeRuntime = typeof process === 'undefined' || typeof process.cwd !== 'function';
+    
+    let dbPath;
+    if (isEdgeRuntime) {
+      // Edge Runtime 环境中，使用相对路径或固定路径
+      dbPath = path.join('.data', 'moontv.db');
+    } else {
+      // 普通 Node.js 环境中，使用 process.cwd()
+      dbPath = path.join(process.cwd(), '.data', 'moontv.db');
+    }
 
-  const db = new Database(dbPath);
-  db.pragma('journal_mode = WAL'); // 启用 WAL 模式提升性能
+    db = new Database(dbPath);
+    db.pragma('journal_mode = WAL'); // 启用 WAL 模式提升性能
 
-  console.log('Using SQLite database (development mode)');
-  console.log('Database location:', dbPath);
+    console.log('Using SQLite database (development mode)');
+    console.log('Database location:', dbPath);
+  } catch (error) {
+    console.error('Failed to initialize SQLite database:', error);
+    // 在构建环境中，如果 better-sqlite3 编译失败，返回一个空的适配器
+    // 实际运行时如果需要会重新尝试初始化
+    return new Proxy({}, {
+      get(target, prop) {
+        throw new Error('SQLite database not initialized. Please check if better-sqlite3 is properly installed.');
+      }
+    });
+  }
 
   return new SQLiteAdapter(db);
 }

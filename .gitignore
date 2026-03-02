@@ -63,3 +63,5 @@ public/workbox-*.js.map
 *.db
 *.db-shm
 *.db-wal
+/.idea/
+/.idea/
