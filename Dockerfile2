@@ -1,0 +1,35 @@
+# ---- 生成运行时镜像 ----
+FROM alibaba-cloud-linux-3-registry.cn-hangzhou.cr.aliyuncs.com/alinux3/node:20.16 AS runner
+
+USER root
+# 配置国内 npm 镜像源并安装 pnpm
+RUN npm config set registry https://registry.npmmirror.com || npm config set registry https://registry.npmmirror.com
+RUN npm config set strict-ssl false
+RUN npm install -g pnpm
+ENV PATH=/usr/local/bin:$PATH
+
+# 创建非 root 用户
+RUN groupadd -g 1001 nodejs && useradd -u 1001 -g nodejs -s /bin/bash -m nextjs
+
+WORKDIR /app
+ENV NODE_ENV=production
+ENV HOSTNAME=0.0.0.0
+ENV PORT=3000
+ENV DOCKER_ENV=true
+
+# 复制构建好的文件
+COPY --chown=nextjs:nodejs .next/standalone ./
+COPY --chown=nextjs:nodejs scripts ./scripts
+COPY --chown=nextjs:nodejs start.js ./start.js
+COPY --chown=nextjs:nodejs server.js ./server.js
+COPY --chown=nextjs:nodejs public ./public
+COPY --chown=nextjs:nodejs .next/static ./.next/static
+COPY --chown=nextjs:nodejs node_modules ./node_modules
+
+# 切换到非特权用户
+USER nextjs
+
+EXPOSE 3000
+
+# 使用自定义启动脚本
+CMD ["node", "start.js"]
