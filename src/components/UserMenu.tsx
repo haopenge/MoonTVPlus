@@ -23,6 +23,7 @@ import {
   MoveDown,
   MoveUp,
   Package,
+  Router as RouterIcon,
   Rss,
   Settings,
   Shield,
@@ -78,12 +79,12 @@ export const UserMenu: React.FC = () => {
   // 订阅相关状态
   const [subscribeEnabled, setSubscribeEnabled] = useState(false);
   const [subscribeUrl, setSubscribeUrl] = useState('');
-  const [subscribeUrlWithAdFilter, setSubscribeUrlWithAdFilter] = useState('');
   const [copySuccess, setCopySuccess] = useState(false);
-  const [copySuccessAdFilter, setCopySuccessAdFilter] = useState(false);
   const [tvboxToken, setTvboxToken] = useState('');
   const [isResettingToken, setIsResettingToken] = useState(false);
   const [isLoadingSubscribeUrl, setIsLoadingSubscribeUrl] = useState(false);
+  const [subscribeAdFilterEnabled, setSubscribeAdFilterEnabled] = useState(false);
+  const [subscribeYellowFilterEnabled, setSubscribeYellowFilterEnabled] = useState(false);
 
   // Body 滚动锁定 - 使用 overflow 方式避免布局问题
   useEffect(() => {
@@ -117,10 +118,17 @@ export const UserMenu: React.FC = () => {
   const [tmdbBackdropDisabled, setTmdbBackdropDisabled] = useState(false);
   const [enableTrailers, setEnableTrailers] = useState(false);
   const [doubanDataSource, setDoubanDataSource] = useState('cmliussss-cdn-tencent');
+  const [doubanDataSourceBackup, setDoubanDataSourceBackup] = useState('direct');
   const [doubanImageProxyType, setDoubanImageProxyType] = useState('cmliussss-cdn-tencent');
+  const [doubanImageProxyTypeBackup, setDoubanImageProxyTypeBackup] = useState('server');
   const [doubanImageProxyUrl, setDoubanImageProxyUrl] = useState('');
+  const [doubanProxyUrlBackup, setDoubanProxyUrlBackup] = useState('');
+  const [doubanImageProxyUrlBackup, setDoubanImageProxyUrlBackup] = useState('');
   const [isDoubanDropdownOpen, setIsDoubanDropdownOpen] = useState(false);
+  const [isDoubanBackupDropdownOpen, setIsDoubanBackupDropdownOpen] = useState(false);
   const [isDoubanImageProxyDropdownOpen, setIsDoubanImageProxyDropdownOpen] =
+    useState(false);
+  const [isDoubanImageProxyBackupDropdownOpen, setIsDoubanImageProxyBackupDropdownOpen] =
     useState(false);
   const [bufferStrategy, setBufferStrategy] = useState('medium');
   const [nextEpisodePreCache, setNextEpisodePreCache] = useState(true);
@@ -156,7 +164,7 @@ export const UserMenu: React.FC = () => {
     isOpen: false,
     title: '',
     message: '',
-    onConfirm: () => {},
+    onConfirm: () => undefined,
   });
 
   // 折叠面板状态
@@ -323,13 +331,7 @@ export const UserMenu: React.FC = () => {
         const token = data.token;
         setTvboxToken(token);
 
-        // 前端拼接订阅链接
-        const currentOrigin = window.location.origin;
-        const standardUrl = `${currentOrigin}/api/tvbox/subscribe?token=${token}`;
-        const adFilterUrl = `${currentOrigin}/api/tvbox/subscribe?token=${token}&adFilter=true`;
-
-        setSubscribeUrl(standardUrl);
-        setSubscribeUrlWithAdFilter(adFilterUrl);
+        setSubscribeUrl(buildSubscribeUrl(token, subscribeAdFilterEnabled, subscribeYellowFilterEnabled));
       }
     } catch (error) {
       console.error('获取订阅URL失败:', error);
@@ -359,13 +361,7 @@ export const UserMenu: React.FC = () => {
             const token = data.token;
             setTvboxToken(token);
 
-            // 更新订阅链接
-            const currentOrigin = window.location.origin;
-            const standardUrl = `${currentOrigin}/api/tvbox/subscribe?token=${token}`;
-            const adFilterUrl = `${currentOrigin}/api/tvbox/subscribe?token=${token}&adFilter=true`;
-
-            setSubscribeUrl(standardUrl);
-            setSubscribeUrlWithAdFilter(adFilterUrl);
+            setSubscribeUrl(buildSubscribeUrl(token, subscribeAdFilterEnabled, subscribeYellowFilterEnabled));
 
             if (messageEl) {
               messageEl.textContent = '订阅token已重置！';
@@ -396,6 +392,19 @@ export const UserMenu: React.FC = () => {
         }
       },
     });
+  };
+
+  const buildSubscribeUrl = (token: string, adFilter: boolean, yellowFilter: boolean) => {
+    const currentOrigin = window.location.origin;
+    const url = new URL('/api/tvbox/subscribe', currentOrigin);
+    url.searchParams.set('token', token);
+    if (adFilter) {
+      url.searchParams.set('adFilter', 'true');
+    }
+    if (yellowFilter) {
+      url.searchParams.set('yellowFilter', 'true');
+    }
+    return url.toString();
   };
 
   // 获取认证信息和存储类型
@@ -438,6 +447,16 @@ export const UserMenu: React.FC = () => {
         setDoubanProxyUrl(defaultDoubanProxy);
       }
 
+      const savedDoubanDataSourceBackup = localStorage.getItem(
+        'doubanDataSourceBackup'
+      );
+      setDoubanDataSourceBackup(savedDoubanDataSourceBackup || 'direct');
+
+      const savedDoubanProxyUrlBackup = localStorage.getItem(
+        'doubanProxyUrlBackup'
+      );
+      setDoubanProxyUrlBackup(savedDoubanProxyUrlBackup || '');
+
       const savedDoubanImageProxyType = localStorage.getItem(
         'doubanImageProxyType'
       );
@@ -459,6 +478,16 @@ export const UserMenu: React.FC = () => {
       } else if (defaultDoubanImageProxyUrl) {
         setDoubanImageProxyUrl(defaultDoubanImageProxyUrl);
       }
+
+      const savedDoubanImageProxyTypeBackup = localStorage.getItem(
+        'doubanImageProxyTypeBackup'
+      );
+      setDoubanImageProxyTypeBackup(savedDoubanImageProxyTypeBackup || 'server');
+
+      const savedDoubanImageProxyUrlBackup = localStorage.getItem(
+        'doubanImageProxyUrlBackup'
+      );
+      setDoubanImageProxyUrlBackup(savedDoubanImageProxyUrlBackup || '');
 
       const savedTmdbImageBaseUrl = localStorage.getItem('tmdbImageBaseUrl');
       if (savedTmdbImageBaseUrl !== null) {
@@ -754,6 +783,23 @@ export const UserMenu: React.FC = () => {
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
+      if (isDoubanBackupDropdownOpen) {
+        const target = event.target as Element;
+        if (!target.closest('[data-dropdown="douban-datasource-backup"]')) {
+          setIsDoubanBackupDropdownOpen(false);
+        }
+      }
+    };
+
+    if (isDoubanBackupDropdownOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () =>
+        document.removeEventListener('mousedown', handleClickOutside);
+    }
+  }, [isDoubanBackupDropdownOpen]);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
       if (isDoubanImageProxyDropdownOpen) {
         const target = event.target as Element;
         if (!target.closest('[data-dropdown="douban-image-proxy"]')) {
@@ -768,6 +814,23 @@ export const UserMenu: React.FC = () => {
         document.removeEventListener('mousedown', handleClickOutside);
     }
   }, [isDoubanImageProxyDropdownOpen]);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (isDoubanImageProxyBackupDropdownOpen) {
+        const target = event.target as Element;
+        if (!target.closest('[data-dropdown="douban-image-proxy-backup"]')) {
+          setIsDoubanImageProxyBackupDropdownOpen(false);
+        }
+      }
+    };
+
+    if (isDoubanImageProxyBackupDropdownOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () =>
+        document.removeEventListener('mousedown', handleClickOutside);
+    }
+  }, [isDoubanImageProxyBackupDropdownOpen]);
 
   const handleMenuClick = () => {
     setIsOpen(!isOpen);
@@ -819,7 +882,6 @@ export const UserMenu: React.FC = () => {
   const handleCloseSubscribe = () => {
     setIsSubscribeOpen(false);
     setCopySuccess(false);
-    setCopySuccessAdFilter(false);
   };
 
   const handleCopySubscribeUrl = async () => {
@@ -833,18 +895,11 @@ export const UserMenu: React.FC = () => {
       console.error('复制失败:', error);
     }
   };
-
-  const handleCopySubscribeUrlWithAdFilter = async () => {
-    try {
-      await navigator.clipboard.writeText(subscribeUrlWithAdFilter);
-      setCopySuccessAdFilter(true);
-      setTimeout(() => {
-        setCopySuccessAdFilter(false);
-      }, 2000);
-    } catch (error) {
-      console.error('复制失败:', error);
-    }
-  };
+  
+  useEffect(() => {
+    if (!tvboxToken || !isSubscribeOpen) return;
+    setSubscribeUrl(buildSubscribeUrl(tvboxToken, subscribeAdFilterEnabled, subscribeYellowFilterEnabled));
+  }, [tvboxToken, subscribeAdFilterEnabled, subscribeYellowFilterEnabled, isSubscribeOpen]);
 
   const handleSubmitChangePassword = async () => {
     setPasswordError('');
@@ -1055,6 +1110,13 @@ export const UserMenu: React.FC = () => {
     }
   };
 
+  const handleDoubanDataSourceBackupChange = (value: string) => {
+    setDoubanDataSourceBackup(value);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('doubanDataSourceBackup', value);
+    }
+  };
+
   const handleDoubanImageProxyTypeChange = (value: string) => {
     setDoubanImageProxyType(value);
     if (typeof window !== 'undefined') {
@@ -1062,10 +1124,31 @@ export const UserMenu: React.FC = () => {
     }
   };
 
+  const handleDoubanImageProxyTypeBackupChange = (value: string) => {
+    setDoubanImageProxyTypeBackup(value);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('doubanImageProxyTypeBackup', value);
+    }
+  };
+
+  const handleDoubanProxyUrlBackupChange = (value: string) => {
+    setDoubanProxyUrlBackup(value);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('doubanProxyUrlBackup', value);
+    }
+  };
+
   const handleDoubanImageProxyUrlChange = (value: string) => {
     setDoubanImageProxyUrl(value);
     if (typeof window !== 'undefined') {
       localStorage.setItem('doubanImageProxyUrl', value);
+    }
+  };
+
+  const handleDoubanImageProxyUrlBackupChange = (value: string) => {
+    setDoubanImageProxyUrlBackup(value);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('doubanImageProxyUrlBackup', value);
     }
   };
 
@@ -1246,8 +1329,12 @@ export const UserMenu: React.FC = () => {
     setEnableTrailers(false);
     setDoubanProxyUrl(defaultDoubanProxy);
     setDoubanDataSource(defaultDoubanProxyType);
+    setDoubanDataSourceBackup('direct');
+    setDoubanProxyUrlBackup('');
     setDoubanImageProxyType(defaultDoubanImageProxyType);
     setDoubanImageProxyUrl(defaultDoubanImageProxyUrl);
+    setDoubanImageProxyTypeBackup('server');
+    setDoubanImageProxyUrlBackup('');
     setTmdbImageBaseUrl('https://image.tmdb.org');
     setBufferStrategy('medium');
     setNextEpisodePreCache(true);
@@ -1267,8 +1354,12 @@ export const UserMenu: React.FC = () => {
       localStorage.setItem('enableTrailers', 'false');
       localStorage.setItem('doubanProxyUrl', defaultDoubanProxy);
       localStorage.setItem('doubanDataSource', defaultDoubanProxyType);
+      localStorage.setItem('doubanDataSourceBackup', 'direct');
+      localStorage.setItem('doubanProxyUrlBackup', '');
       localStorage.setItem('doubanImageProxyType', defaultDoubanImageProxyType);
       localStorage.setItem('doubanImageProxyUrl', defaultDoubanImageProxyUrl);
+      localStorage.setItem('doubanImageProxyTypeBackup', 'server');
+      localStorage.setItem('doubanImageProxyUrlBackup', '');
       localStorage.setItem('tmdbImageBaseUrl', 'https://image.tmdb.org');
       localStorage.setItem('bufferStrategy', 'medium');
       localStorage.setItem('nextEpisodePreCache', 'true');
@@ -1729,6 +1820,96 @@ export const UserMenu: React.FC = () => {
                         value={doubanProxyUrl}
                         onChange={(e) => handleDoubanProxyUrlChange(e.target.value)}
                       />
+                      {!doubanProxyUrl.trim() && (
+                        <p className='text-xs text-amber-600 dark:text-amber-400 mt-1'>
+                          未填写地址时将自动按直连处理
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  <div className='space-y-3'>
+                    <div>
+                      <h4 className='text-sm font-medium text-gray-700 dark:text-gray-300'>
+                        豆瓣数据备用渠道
+                      </h4>
+                      <p className='text-xs text-gray-500 dark:text-gray-400 mt-1'>
+                        主渠道失败后自动切换，默认直连
+                      </p>
+                    </div>
+                    <div
+                      className='relative'
+                      data-dropdown='douban-datasource-backup'
+                    >
+                      <button
+                        type='button'
+                        onClick={() =>
+                          setIsDoubanBackupDropdownOpen(!isDoubanBackupDropdownOpen)
+                        }
+                        className='w-full px-3 py-2.5 pr-10 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500 transition-all duration-200 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 shadow-sm hover:border-gray-400 dark:hover:border-gray-500 text-left'
+                      >
+                        {
+                          doubanDataSourceOptions.find(
+                            (option) => option.value === doubanDataSourceBackup
+                          )?.label
+                        }
+                      </button>
+                      <div className='absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none'>
+                        <ChevronDown
+                          className={`w-4 h-4 text-gray-400 dark:text-gray-500 transition-transform duration-200 ${isDoubanBackupDropdownOpen ? 'rotate-180' : ''
+                            }`}
+                        />
+                      </div>
+                      {isDoubanBackupDropdownOpen && (
+                        <div className='absolute z-50 w-full mt-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg shadow-lg max-h-60 overflow-auto'>
+                          {doubanDataSourceOptions.map((option) => (
+                            <button
+                              key={option.value}
+                              type='button'
+                              onClick={() => {
+                                handleDoubanDataSourceBackupChange(option.value);
+                                setIsDoubanBackupDropdownOpen(false);
+                              }}
+                              className={`w-full px-3 py-2.5 text-left text-sm transition-colors duration-150 flex items-center justify-between hover:bg-gray-100 dark:hover:bg-gray-700 ${doubanDataSourceBackup === option.value
+                                ? 'bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400'
+                                : 'text-gray-900 dark:text-gray-100'
+                                }`}
+                            >
+                              <span className='truncate'>{option.label}</span>
+                              {doubanDataSourceBackup === option.value && (
+                                <Check className='w-4 h-4 text-green-600 dark:text-green-400 flex-shrink-0 ml-2' />
+                              )}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {doubanDataSourceBackup === 'custom' && (
+                    <div className='space-y-3'>
+                      <div>
+                        <h4 className='text-sm font-medium text-gray-700 dark:text-gray-300'>
+                          豆瓣备用代理地址
+                        </h4>
+                        <p className='text-xs text-gray-500 dark:text-gray-400 mt-1'>
+                          备用渠道为自定义代理时生效
+                        </p>
+                      </div>
+                      <input
+                        type='text'
+                        className='w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500 transition-all duration-200 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder-gray-500 dark:placeholder-gray-400 shadow-sm hover:border-gray-400 dark:hover:border-gray-500'
+                        placeholder='例如: https://proxy.example.com/fetch?url='
+                        value={doubanProxyUrlBackup}
+                        onChange={(e) =>
+                          handleDoubanProxyUrlBackupChange(e.target.value)
+                        }
+                      />
+                      {!doubanProxyUrlBackup.trim() && (
+                        <p className='text-xs text-amber-600 dark:text-amber-400 mt-1'>
+                          未填写地址时备用渠道将自动按直连处理
+                        </p>
+                      )}
                     </div>
                   )}
 
@@ -1839,6 +2020,98 @@ export const UserMenu: React.FC = () => {
                           handleDoubanImageProxyUrlChange(e.target.value)
                         }
                       />
+                      {!doubanImageProxyUrl.trim() && (
+                        <p className='text-xs text-amber-600 dark:text-amber-400 mt-1'>
+                          未填写地址时将自动按服务器代理处理
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  <div className='space-y-3'>
+                    <div>
+                      <h4 className='text-sm font-medium text-gray-700 dark:text-gray-300'>
+                        豆瓣图片备用渠道
+                      </h4>
+                      <p className='text-xs text-gray-500 dark:text-gray-400 mt-1'>
+                        主图片渠道失败后自动切换，默认服务器代理
+                      </p>
+                    </div>
+                    <div
+                      className='relative'
+                      data-dropdown='douban-image-proxy-backup'
+                    >
+                      <button
+                        type='button'
+                        onClick={() =>
+                          setIsDoubanImageProxyBackupDropdownOpen(
+                            !isDoubanImageProxyBackupDropdownOpen
+                          )
+                        }
+                        className='w-full px-3 py-2.5 pr-10 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500 transition-all duration-200 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 shadow-sm hover:border-gray-400 dark:hover:border-gray-500 text-left'
+                      >
+                        {
+                          doubanImageProxyTypeOptions.find(
+                            (option) => option.value === doubanImageProxyTypeBackup
+                          )?.label
+                        }
+                      </button>
+                      <div className='absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none'>
+                        <ChevronDown
+                          className={`w-4 h-4 text-gray-400 dark:text-gray-500 transition-transform duration-200 ${isDoubanImageProxyBackupDropdownOpen ? 'rotate-180' : ''
+                            }`}
+                        />
+                      </div>
+                      {isDoubanImageProxyBackupDropdownOpen && (
+                        <div className='absolute z-50 w-full mt-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg shadow-lg max-h-60 overflow-auto'>
+                          {doubanImageProxyTypeOptions.map((option) => (
+                            <button
+                              key={option.value}
+                              type='button'
+                              onClick={() => {
+                                handleDoubanImageProxyTypeBackupChange(option.value);
+                                setIsDoubanImageProxyBackupDropdownOpen(false);
+                              }}
+                              className={`w-full px-3 py-2.5 text-left text-sm transition-colors duration-150 flex items-center justify-between hover:bg-gray-100 dark:hover:bg-gray-700 ${doubanImageProxyTypeBackup === option.value
+                                ? 'bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400'
+                                : 'text-gray-900 dark:text-gray-100'
+                                }`}
+                            >
+                              <span className='truncate'>{option.label}</span>
+                              {doubanImageProxyTypeBackup === option.value && (
+                                <Check className='w-4 h-4 text-green-600 dark:text-green-400 flex-shrink-0 ml-2' />
+                              )}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {doubanImageProxyTypeBackup === 'custom' && (
+                    <div className='space-y-3'>
+                      <div>
+                        <h4 className='text-sm font-medium text-gray-700 dark:text-gray-300'>
+                          豆瓣图片备用代理地址
+                        </h4>
+                        <p className='text-xs text-gray-500 dark:text-gray-400 mt-1'>
+                          备用图片渠道为自定义代理时生效
+                        </p>
+                      </div>
+                      <input
+                        type='text'
+                        className='w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500 transition-all duration-200 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder-gray-500 dark:placeholder-gray-400 shadow-sm hover:border-gray-400 dark:hover:border-gray-500'
+                        placeholder='例如: https://proxy.example.com/fetch?url='
+                        value={doubanImageProxyUrlBackup}
+                        onChange={(e) =>
+                          handleDoubanImageProxyUrlBackupChange(e.target.value)
+                        }
+                      />
+                      {!doubanImageProxyUrlBackup.trim() && (
+                        <p className='text-xs text-amber-600 dark:text-amber-400 mt-1'>
+                          未填写地址时备用图片渠道将自动按服务器代理处理
+                        </p>
+                      )}
                     </div>
                   )}
 
@@ -2833,18 +3106,18 @@ export const UserMenu: React.FC = () => {
           <div className='space-y-4'>
             {isLoadingSubscribeUrl ? (
               <>
-                {/* 加载骨架 - 订阅链接（标准） */}
+                {/* 加载骨架 - 开关 */}
                 <div>
-                  <div className='h-5 w-32 bg-gray-200 dark:bg-gray-700 rounded mb-2 animate-pulse'></div>
-                  <div className='flex gap-2'>
-                    <div className='flex-1 h-10 bg-gray-200 dark:bg-gray-700 rounded animate-pulse'></div>
-                    <div className='w-20 h-10 bg-gray-200 dark:bg-gray-700 rounded animate-pulse'></div>
+                  <div className='h-5 w-24 bg-gray-200 dark:bg-gray-700 rounded mb-3 animate-pulse'></div>
+                  <div className='space-y-2'>
+                    <div className='h-14 bg-gray-200 dark:bg-gray-700 rounded animate-pulse'></div>
+                    <div className='h-14 bg-gray-200 dark:bg-gray-700 rounded animate-pulse'></div>
                   </div>
                 </div>
 
-                {/* 加载骨架 - 订阅链接（去广告） */}
+                {/* 加载骨架 - 订阅链接 */}
                 <div>
-                  <div className='h-5 w-36 bg-gray-200 dark:bg-gray-700 rounded mb-2 animate-pulse'></div>
+                  <div className='h-5 w-28 bg-gray-200 dark:bg-gray-700 rounded mb-2 animate-pulse'></div>
                   <div className='flex gap-2'>
                     <div className='flex-1 h-10 bg-gray-200 dark:bg-gray-700 rounded animate-pulse'></div>
                     <div className='w-20 h-10 bg-gray-200 dark:bg-gray-700 rounded animate-pulse'></div>
@@ -2860,10 +3133,51 @@ export const UserMenu: React.FC = () => {
               </>
             ) : (
               <>
-                {/* 订阅链接（标准） */}
+                <div className='space-y-3'>
+                  <h4 className='text-sm font-medium text-gray-700 dark:text-gray-300'>
+                    订阅选项
+                  </h4>
+
+                  <button
+                    type='button'
+                    onClick={() => setSubscribeAdFilterEnabled((prev) => !prev)}
+                    className='w-full flex items-center justify-between rounded-lg border border-gray-200 dark:border-gray-700 px-4 py-3 text-left bg-gray-50 dark:bg-gray-800/70'
+                  >
+                    <div>
+                      <div className='text-sm font-medium text-gray-800 dark:text-gray-200'>
+                        去广告
+                      </div>
+                      <div className='text-xs text-gray-500 dark:text-gray-400 mt-1'>
+                        开启后通过代理处理播放链接，兼容性可能略低
+                      </div>
+                    </div>
+                    <div className={`relative h-6 w-11 rounded-full transition-colors ${subscribeAdFilterEnabled ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-600'}`}>
+                      <div className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-transform ${subscribeAdFilterEnabled ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                    </div>
+                  </button>
+
+                  <button
+                    type='button'
+                    onClick={() => setSubscribeYellowFilterEnabled((prev) => !prev)}
+                    className='w-full flex items-center justify-between rounded-lg border border-gray-200 dark:border-gray-700 px-4 py-3 text-left bg-gray-50 dark:bg-gray-800/70'
+                  >
+                    <div>
+                      <div className='text-sm font-medium text-gray-800 dark:text-gray-200'>
+                        黄色过滤
+                      </div>
+                      <div className='text-xs text-gray-500 dark:text-gray-400 mt-1'>
+                        开启后同样走代理，并在代理搜索时过滤黄色内容
+                      </div>
+                    </div>
+                    <div className={`relative h-6 w-11 rounded-full transition-colors ${subscribeYellowFilterEnabled ? 'bg-yellow-500' : 'bg-gray-300 dark:bg-gray-600'}`}>
+                      <div className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-transform ${subscribeYellowFilterEnabled ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                    </div>
+                  </button>
+                </div>
+
                 <div>
                   <h4 className='text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
-                    订阅链接（标准）
+                    订阅链接
                   </h4>
                   <div className='flex gap-2'>
                     <input
@@ -2880,31 +3194,11 @@ export const UserMenu: React.FC = () => {
                       {copySuccess ? '已复制' : '复制'}
                     </button>
                   </div>
-                </div>
-
-                {/* 订阅链接（去广告） */}
-                <div>
-                  <h4 className='text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
-                    订阅链接（去广告）
-                  </h4>
-                  <div className='flex gap-2'>
-                    <input
-                      type='text'
-                      className='flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-gray-100'
-                      value={subscribeUrlWithAdFilter}
-                      readOnly
-                    />
-                    <button
-                      onClick={handleCopySubscribeUrlWithAdFilter}
-                      className='px-4 py-2 bg-green-600 hover:bg-green-700 dark:bg-green-700 dark:hover:bg-green-600 text-white text-sm font-medium rounded-md transition-colors flex items-center gap-2 whitespace-nowrap'
-                    >
-                      <Copy className='w-4 h-4' />
-                      {copySuccessAdFilter ? '已复制' : '复制'}
-                    </button>
-                  </div>
-                  <p className='text-xs text-gray-500 dark:text-gray-400 mt-1'>
-                    💡 去广告需要经过服务器代理，某些源可能因为区域或兼容问题无法播放
-                  </p>
+                  {(subscribeAdFilterEnabled || subscribeYellowFilterEnabled) && (
+                    <p className='text-xs text-gray-500 dark:text-gray-400 mt-1'>
+                      💡 代理模式已开启，某些源可能因为区域或兼容问题无法播放
+                    </p>
+                  )}
                 </div>
 
                 {/* 重置Token按钮 */}
@@ -3558,6 +3852,38 @@ export const UserMenu: React.FC = () => {
                       target='_blank'
                       rel='noopener noreferrer'
                       className='inline-flex items-center gap-2 px-4 py-2 bg-indigo-500 hover:bg-indigo-600 text-white text-sm font-medium rounded-lg transition-colors'
+                    >
+                      <Download className='w-4 h-4' />
+                      下载
+                      <ExternalLink className='w-3 h-3' />
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              {/* 私人影库转码器 */}
+              <div className='bg-gray-50 dark:bg-gray-800 rounded-lg p-5 border border-gray-200 dark:border-gray-700'>
+                <div className='flex items-start gap-4'>
+                  <div className='flex-shrink-0 relative'>
+                    <div className='w-16 h-16 rounded-xl bg-amber-500 flex items-center justify-center shadow-sm'>
+                      <RouterIcon className='w-8 h-8 text-white' />
+                    </div>
+                    <span className='absolute -top-1 -right-1 px-1.5 py-0.5 bg-red-500 text-white text-[10px] font-bold rounded'>
+                      MKV转码
+                    </span>
+                  </div>
+                  <div className='flex-1 min-w-0'>
+                    <h4 className='text-lg font-semibold text-gray-900 dark:text-gray-100 mb-2'>
+                      私人影库转码器
+                    </h4>
+                    <p className='text-sm text-gray-600 dark:text-gray-400 mb-3'>
+                      为私人影库中的 MKV 视频提供转码播放能力，可解析内封字幕并解决部分视频无音频问题，但通常需要较高的本机性能配置。
+                    </p>
+                    <a
+                      href='https://github.com/mtvpls/moontvplus-transcoder/tags'
+                      target='_blank'
+                      rel='noopener noreferrer'
+                      className='inline-flex items-center gap-2 px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white text-sm font-medium rounded-lg transition-colors'
                     >
                       <Download className='w-4 h-4' />
                       下载

@@ -21,7 +21,7 @@ import {
   saveFavorite,
   subscribeToDataUpdates,
 } from '@/lib/db.client';
-import { processImageUrl } from '@/lib/utils';
+import { processImageUrl, base58Decode, tryApplyDoubanImageFallback } from '@/lib/utils';
 import { useLongPress } from '@/hooks/useLongPress';
 
 import AIChatPanel from '@/components/AIChatPanel';
@@ -172,6 +172,14 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard
   const actualQuery = query || '';
   const actualSearchType = type;
   const isDirectPlaySource = actualSource === 'directplay';
+  const directLinkUrl = useMemo(() => {
+    if (!isDirectPlaySource || !actualId) return '';
+    try {
+      return base58Decode(actualId);
+    } catch {
+      return '';
+    }
+  }, [isDirectPlaySource, actualId]);
   const displayYear = useMemo(() => {
     if (!actualYear) return '';
     const normalized = actualYear.trim();
@@ -742,8 +750,12 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard
                 setShowImageViewer(true);
               }}
               onError={(e) => {
+                const img = e.currentTarget as HTMLImageElement;
+                if (tryApplyDoubanImageFallback(img, actualPoster)) {
+                  return;
+                }
+
                 // 图片加载失败时的重试机制
-                const img = e.target as HTMLImageElement;
                 if (!img.dataset.retried) {
                   img.dataset.retried = 'true';
                   setTimeout(() => {
@@ -938,6 +950,38 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard
             </div>
           )}
 
+          {/* 竖向模式：顶部直链地址显示 */}
+          {orientation === 'vertical' && isDirectPlaySource && directLinkUrl && (
+            <div
+              className='absolute top-1 left-1 right-1 sm:top-2 sm:left-2 sm:right-2 pt-1 px-1 sm:pt-2 sm:px-2'
+              style={{
+                WebkitUserSelect: 'none',
+                userSelect: 'none',
+                WebkitTouchCallout: 'none',
+              } as React.CSSProperties}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                return false;
+              }}
+            >
+              <div
+                className='text-[9px] sm:text-[10px] text-yellow-400 line-clamp-2 break-all'
+                style={{
+                  WebkitUserSelect: 'none',
+                  userSelect: 'none',
+                  WebkitTouchCallout: 'none',
+                } as React.CSSProperties}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  return false;
+                }}
+                title={directLinkUrl}
+              >
+                {directLinkUrl}
+              </div>
+            </div>
+          )}
+
           {actualEpisodes && actualEpisodes > 1 && orientation === 'vertical' && (
             <div
               className='absolute top-1 right-1 sm:top-2 sm:right-2 flex flex-col gap-0.5 sm:gap-1.5'
@@ -1003,7 +1047,7 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard
             >
               <span
                 className={`inline-block border rounded px-1 py-0.5 text-[8px] text-white/90 bg-black/60 ${
-                  actualSource === 'xiaoya' ? 'border-blue-500' : actualSource === 'openlist' || actualSource === 'emby' || actualSource?.startsWith('emby_') ? 'border-yellow-500' : origin === 'live' ? 'border-red-500' : 'border-white/60'
+                  actualSource === 'xiaoya' ? 'border-blue-500' : actualSource === 'quark-temp' ? 'border-purple-500' : actualSource === 'openlist' || actualSource === 'emby' || actualSource?.startsWith('emby_') ? 'border-yellow-500' : origin === 'live' ? 'border-red-500' : 'border-white/60'
                 }`}
                 style={{
                   WebkitUserSelect: 'none',
@@ -1249,6 +1293,25 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard
                     第{currentEpisode}集 · 共{actualEpisodes}集
                   </div>
                 )}
+
+                {/* 直链地址 */}
+                {isDirectPlaySource && directLinkUrl && (
+                  <div
+                    className='text-[10px] text-white/75 truncate'
+                    style={{
+                      WebkitUserSelect: 'none',
+                      userSelect: 'none',
+                      WebkitTouchCallout: 'none',
+                    } as React.CSSProperties}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      return false;
+                    }}
+                    title={directLinkUrl}
+                  >
+                    {directLinkUrl}
+                  </div>
+                )}
               </div>
 
               {/* 底部渐变遮罩 - 用于进度条背景 */}
@@ -1308,7 +1371,7 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard
                       {config.showSourceName && source_name && !cmsData && (
                         <span
                           className={`inline-block border rounded px-1 py-0.5 text-[8px] text-white/90 bg-black/30 backdrop-blur-sm ${
-                            actualSource === 'xiaoya' ? 'border-blue-500' : actualSource === 'openlist' || actualSource === 'emby' || actualSource?.startsWith('emby_') ? 'border-yellow-500' : 'border-white/60'
+                            actualSource === 'xiaoya' ? 'border-blue-500' : actualSource === 'quark-temp' ? 'border-purple-500' : actualSource === 'openlist' || actualSource === 'emby' || actualSource?.startsWith('emby_') ? 'border-yellow-500' : 'border-white/60'
                           }`}
                           style={{
                             WebkitUserSelect: 'none',
@@ -1487,6 +1550,7 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard
         sources={isAggregate && dynamicSourceNames ? Array.from(new Set(dynamicSourceNames)) : undefined}
         isAggregate={isAggregate}
         sourceName={cmsData ? undefined : source_name}
+        directLinkUrl={directLinkUrl || undefined}
         currentEpisode={currentEpisode}
         totalEpisodes={actualEpisodes}
         origin={origin}
@@ -1538,7 +1602,7 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard
         <ImageViewer
           isOpen={showImageViewer}
           onClose={() => setShowImageViewer(false)}
-          imageUrl={processImageUrl(actualPoster)}
+          imageUrl={actualPoster}
           alt={actualTitle}
         />
       )}

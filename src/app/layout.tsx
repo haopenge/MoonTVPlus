@@ -6,6 +6,7 @@ import { Inter } from 'next/font/google';
 import './globals.css';
 
 import { getConfig } from '@/lib/config';
+import { listEnabledSourceScripts } from '@/lib/source-script';
 
 import { DanmakuCacheCleanup } from '../components/DanmakuCacheCleanup';
 import { DownloadBubble } from '../components/DownloadBubble';
@@ -74,6 +75,7 @@ export default async function RootLayout({
   let progressThumbPresetId = '';
   let progressThumbCustomUrl = '';
   let enableRegistration = false;
+  let requireRegistrationInviteCode = false;
   let loginRequireTurnstile = false;
   let registrationRequireTurnstile = false;
   let turnstileSiteKey = '';
@@ -91,6 +93,7 @@ export default async function RootLayout({
   let webLiveEnabled = false;
   let customAdFilterVersion = 0;
   let tuneHubEnabled = false;
+  let advancedRecommendationEnabled = false;
   let customCategories = [] as {
     name: string;
     type: 'movie' | 'tv';
@@ -123,6 +126,7 @@ export default async function RootLayout({
     progressThumbPresetId = config.ThemeConfig?.progressThumbPresetId || '';
     progressThumbCustomUrl = config.ThemeConfig?.progressThumbCustomUrl || '';
     enableRegistration = config.SiteConfig.EnableRegistration || false;
+    requireRegistrationInviteCode = config.SiteConfig.RequireRegistrationInviteCode || false;
     loginRequireTurnstile = config.SiteConfig.LoginRequireTurnstile || false;
     registrationRequireTurnstile = config.SiteConfig.RegistrationRequireTurnstile || false;
     turnstileSiteKey = config.SiteConfig.TurnstileSiteKey || '';
@@ -145,6 +149,9 @@ export default async function RootLayout({
     customAdFilterVersion = config.SiteConfig?.CustomAdFilterVersion || 0;
     // TuneHub音乐功能配置
     tuneHubEnabled = config.MusicConfig?.TuneHubEnabled || false;
+    // 高级推荐功能配置：存在已启用视频源脚本时显示
+    advancedRecommendationEnabled =
+      (await listEnabledSourceScripts()).length > 0;
     // 检查是否启用了 OpenList 功能
     openListEnabled = !!(
       config.OpenListConfig?.Enabled &&
@@ -190,6 +197,7 @@ export default async function RootLayout({
     PROGRESS_THUMB_PRESET_ID: progressThumbPresetId,
     PROGRESS_THUMB_CUSTOM_URL: progressThumbCustomUrl,
     ENABLE_REGISTRATION: enableRegistration,
+    REQUIRE_REGISTRATION_INVITE_CODE: requireRegistrationInviteCode,
     LOGIN_REQUIRE_TURNSTILE: loginRequireTurnstile,
     REGISTRATION_REQUIRE_TURNSTILE: registrationRequireTurnstile,
     TURNSTILE_SITE_KEY: turnstileSiteKey,
@@ -207,6 +215,7 @@ export default async function RootLayout({
     AI_DEFAULT_MESSAGE_WITH_VIDEO: aiDefaultMessageWithVideo,
     ENABLE_MOVIE_REQUEST: enableMovieRequest,
     WEB_LIVE_ENABLED: webLiveEnabled,
+    ADVANCED_RECOMMENDATION_ENABLED: advancedRecommendationEnabled,
     CUSTOM_AD_FILTER_VERSION: customAdFilterVersion,
     TUNEHUB_ENABLED: tuneHubEnabled,
     FESTIVE_EFFECT_ENABLED:

@@ -39,6 +39,7 @@ export async function POST(request: NextRequest) {
       DoubanImageProxy,
       DisableYellowFilter,
       FluidSearch,
+      DanmakuSourceType,
       DanmakuApiBase,
       DanmakuApiToken,
       TMDBApiKey,
@@ -50,10 +51,16 @@ export async function POST(request: NextRequest) {
       PansouUsername,
       PansouPassword,
       PansouKeywordBlocklist,
+      MagnetProxy,
+      MagnetMikanReverseProxy,
+      MagnetDmhyReverseProxy,
+      MagnetAcgripReverseProxy,
       EnableComments,
       CustomAdFilterCode,
       CustomAdFilterVersion,
       EnableRegistration,
+      RequireRegistrationInviteCode,
+      RegistrationInviteCode,
       RegistrationRequireTurnstile,
       LoginRequireTurnstile,
       TurnstileSiteKey,
@@ -80,6 +87,7 @@ export async function POST(request: NextRequest) {
       DoubanImageProxy: string;
       DisableYellowFilter: boolean;
       FluidSearch: boolean;
+      DanmakuSourceType?: 'builtin' | 'custom';
       DanmakuApiBase: string;
       DanmakuApiToken: string;
       TMDBApiKey?: string;
@@ -91,10 +99,16 @@ export async function POST(request: NextRequest) {
       PansouUsername?: string;
       PansouPassword?: string;
       PansouKeywordBlocklist?: string;
+      MagnetProxy?: string;
+      MagnetMikanReverseProxy?: string;
+      MagnetDmhyReverseProxy?: string;
+      MagnetAcgripReverseProxy?: string;
       EnableComments: boolean;
       CustomAdFilterCode?: string;
       CustomAdFilterVersion?: number;
       EnableRegistration?: boolean;
+      RequireRegistrationInviteCode?: boolean;
+      RegistrationInviteCode?: string;
       RegistrationRequireTurnstile?: boolean;
       LoginRequireTurnstile?: boolean;
       TurnstileSiteKey?: string;
@@ -124,6 +138,9 @@ export async function POST(request: NextRequest) {
       typeof DoubanImageProxy !== 'string' ||
       typeof DisableYellowFilter !== 'boolean' ||
       typeof FluidSearch !== 'boolean' ||
+      (DanmakuSourceType !== undefined &&
+        DanmakuSourceType !== 'builtin' &&
+        DanmakuSourceType !== 'custom') ||
       typeof DanmakuApiBase !== 'string' ||
       typeof DanmakuApiToken !== 'string' ||
       (TMDBApiKey !== undefined && typeof TMDBApiKey !== 'string') ||
@@ -132,10 +149,16 @@ export async function POST(request: NextRequest) {
       (BannerDataSource !== undefined && typeof BannerDataSource !== 'string') ||
       (RecommendationDataSource !== undefined && typeof RecommendationDataSource !== 'string') ||
       (PansouKeywordBlocklist !== undefined && typeof PansouKeywordBlocklist !== 'string') ||
+      (MagnetProxy !== undefined && typeof MagnetProxy !== 'string') ||
+      (MagnetMikanReverseProxy !== undefined && typeof MagnetMikanReverseProxy !== 'string') ||
+      (MagnetDmhyReverseProxy !== undefined && typeof MagnetDmhyReverseProxy !== 'string') ||
+      (MagnetAcgripReverseProxy !== undefined && typeof MagnetAcgripReverseProxy !== 'string') ||
       typeof EnableComments !== 'boolean' ||
       (CustomAdFilterCode !== undefined && typeof CustomAdFilterCode !== 'string') ||
       (CustomAdFilterVersion !== undefined && typeof CustomAdFilterVersion !== 'number') ||
       (EnableRegistration !== undefined && typeof EnableRegistration !== 'boolean') ||
+      (RequireRegistrationInviteCode !== undefined && typeof RequireRegistrationInviteCode !== 'boolean') ||
+      (RegistrationInviteCode !== undefined && typeof RegistrationInviteCode !== 'string') ||
       (RegistrationRequireTurnstile !== undefined && typeof RegistrationRequireTurnstile !== 'boolean') ||
       (LoginRequireTurnstile !== undefined && typeof LoginRequireTurnstile !== 'boolean') ||
       (TurnstileSiteKey !== undefined && typeof TurnstileSiteKey !== 'string') ||
@@ -177,6 +200,7 @@ export async function POST(request: NextRequest) {
       DoubanImageProxy,
       DisableYellowFilter,
       FluidSearch,
+      DanmakuSourceType,
       DanmakuApiBase,
       DanmakuApiToken,
       TMDBApiKey,
@@ -188,10 +212,16 @@ export async function POST(request: NextRequest) {
       PansouUsername,
       PansouPassword,
       PansouKeywordBlocklist,
+      MagnetProxy,
+      MagnetMikanReverseProxy,
+      MagnetDmhyReverseProxy,
+      MagnetAcgripReverseProxy,
       EnableComments,
       CustomAdFilterCode,
       CustomAdFilterVersion,
       EnableRegistration,
+      RequireRegistrationInviteCode,
+      RegistrationInviteCode,
       RegistrationRequireTurnstile,
       LoginRequireTurnstile,
       TurnstileSiteKey,
