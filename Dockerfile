@@ -1,17 +1,10 @@
 # ---- 第 1 阶段：安装依赖 ----
-FROM alibaba-cloud-linux-3-registry.cn-hangzhou.cr.aliyuncs.com/alinux3/node:20.16 AS deps
+FROM node:24-alpine AS deps
 
-USER root
-# 配置国内 npm 镜像源并全局安装 pnpm
-RUN npm config set registry https://registry.npmmirror.com || npm config set registry https://registry.npmmirror.com
-RUN npm config set strict-ssl false
-RUN npm install -g pnpm
-ENV PATH=/usr/local/bin:$PATH
-RUN pnpm config set registry https://registry.npmmirror.com || pnpm config set registry https://registry.npmmirror.com
-RUN pnpm config set strict-ssl false
+# 启用 corepack 并激活 pnpm（Node20 默认提供 corepack）
+RUN corepack enable && corepack prepare pnpm@latest --activate
+
 WORKDIR /app
-RUN chown node:node /app
-USER node
 
 # 仅复制依赖清单，提高构建缓存利用率
 COPY package.json pnpm-lock.yaml ./
@@ -20,21 +13,14 @@ COPY package.json pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
 
 # ---- 第 2 阶段：构建项目 ----
-FROM alibaba-cloud-linux-3-registry.cn-hangzhou.cr.aliyuncs.com/alinux3/node:20.16 AS builder
-USER root
-RUN npm config set registry https://registry.npmmirror.com || npm config set registry https://registry.npmmirror.com
-RUN npm config set strict-ssl false
-RUN npm install -g pnpm
-ENV PATH=/usr/local/bin:$PATH
-RUN pnpm config set registry https://registry.npmmirror.com
+FROM node:24-alpine AS builder
+RUN corepack enable && corepack prepare pnpm@latest --activate
 WORKDIR /app
-RUN chown node:node /app
-USER node
 
 # 复制依赖
 COPY --from=deps /app/node_modules ./node_modules
-# 复制全部源代码（排除 node_modules）
-COPY --chown=node:node . .
+# 复制全部源代码
+COPY . .
 
 # 在构建阶段也显式设置 DOCKER_ENV，
 ENV DOCKER_ENV=true
@@ -42,21 +28,17 @@ ENV DOCKER_ENV=true
 # 生成生产构建
 RUN pnpm run build
 
-# 设置 pnpm 镜像源并提取生产依赖
-RUN (pnpm config set registry https://registry.npmmirror.com || pnpm config set registry https://registry.npmmirror.com) && pnpm config set strict-ssl false && pnpm deploy --filter=. --prod --legacy /tmp/prod-deps
+# 使用 pnpm deploy 提取生产依赖到独立目录
+RUN pnpm deploy --filter=. --prod --legacy /tmp/prod-deps
 
 # ---- 第 3 阶段：生成运行时镜像 ----
-FROM alibaba-cloud-linux-3-registry.cn-hangzhou.cr.aliyuncs.com/alinux3/node:20.16 AS runner
+FROM node:24-alpine AS runner
 
-USER root
-# 配置国内 npm 镜像源并安装 pnpm（修复阿里云效构建问题）
-RUN npm config set registry https://registry.npmmirror.com || npm config set registry https://registry.npmmirror.com
-RUN npm config set strict-ssl false
-RUN npm install -g pnpm
-ENV PATH=/usr/local/bin:$PATH
+# 启用 corepack 并激活 pnpm（用于安装额外依赖）
+RUN corepack enable && corepack prepare pnpm@latest --activate
 
-# 创建非 root 用户（阿里云 Linux 使用 groupadd/useradd）
-RUN groupadd -g 1001 nodejs && useradd -u 1001 -g nodejs -s /bin/bash -m nextjs
+# 创建非 root 用户
+RUN addgroup -g 1001 -S nodejs && adduser -u 1001 -S nextjs -G nodejs
 
 WORKDIR /app
 ENV NODE_ENV=production
@@ -85,4 +67,4 @@ USER nextjs
 EXPOSE 3000
 
 # 使用自定义启动脚本，先预加载配置再启动服务器
-CMD ["node", "start.js"]
+CMD ["node", "start.js"] 
