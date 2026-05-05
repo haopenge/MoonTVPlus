@@ -26,10 +26,6 @@ declare global {
     hls?: any;
     flv?: any;
   }
-  
-  // 为 GPUDevice 和 GPUTexture 添加类型声明
-  interface GPUDevice {}
-  interface GPUTexture {}
 }
 
 // 动态导入浏览器专用库

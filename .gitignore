@@ -63,7 +63,7 @@ public/workbox-*.js.map
 *.db
 *.db-shm
 *.db-wal
-/.idea/
+
 # local scripts
 scripts/tvbox/
 scripts/test
