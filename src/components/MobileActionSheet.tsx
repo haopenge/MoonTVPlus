@@ -26,6 +26,7 @@ interface MobileActionSheetProps {
   totalEpisodes?: number; // 总集数
   origin?: 'vod' | 'live';
   onPosterClick?: () => void; // 海报点击回调
+  description?: string; // 标题下方描述文案
 }
 
 const MobileActionSheet: React.FC<MobileActionSheetProps> = ({
@@ -42,6 +43,7 @@ const MobileActionSheet: React.FC<MobileActionSheetProps> = ({
   totalEpisodes,
   origin = 'vod',
   onPosterClick,
+  description = '选择操作',
 }) => {
   const [isVisible, setIsVisible] = useState(false);
   const [isAnimating, setIsAnimating] = useState(false);
@@ -301,7 +303,7 @@ const MobileActionSheet: React.FC<MobileActionSheetProps> = ({
                     {title}
                   </h3>
                   {isTitleOverflowing && (
-                    <div className="absolute bottom-full left-1/2 z-10 mb-2 -translate-x-1/2 rounded-lg bg-gray-800 px-3 py-2 text-sm text-white shadow-xl opacity-0 invisible transition-all duration-200 ease-out whitespace-nowrap pointer-events-none group-hover/title:opacity-100 group-hover/title:visible dark:bg-gray-900">
+                    <div className="absolute bottom-full left-1/2 z-10 mb-2 w-max max-w-[min(20rem,calc(100vw-2rem))] -translate-x-1/2 rounded-lg bg-gray-800 px-3 py-2 text-center text-sm text-white shadow-xl opacity-0 invisible transition-all duration-200 ease-out whitespace-normal break-words pointer-events-none group-hover/title:opacity-100 group-hover/title:visible dark:bg-gray-900">
                       {title}
                       <div className="absolute top-full left-1/2 h-0 w-0 -translate-x-1/2 border-l-4 border-r-4 border-t-4 border-transparent border-t-gray-800 dark:border-t-gray-900"></div>
                     </div>
@@ -322,7 +324,7 @@ const MobileActionSheet: React.FC<MobileActionSheetProps> = ({
                 </p>
               )}
               <p className="text-sm text-gray-500 dark:text-gray-400">
-                选择操作
+                {description}
               </p>
             </div>
           </div>

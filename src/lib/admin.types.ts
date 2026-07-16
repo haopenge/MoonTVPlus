@@ -8,6 +8,8 @@ export interface AdminConfig {
   SiteConfig: {
     SiteName: string;
     Announcement: string;
+    // 公告显示模式：once=单次显示（每个用户每条公告仅显示一次，换公告则重新显示）；every=每次显示（每次打开首页都显示）
+    AnnouncementDisplayMode?: 'once' | 'every';
     SearchDownstreamMaxPage: number;
     SiteInterfaceCacheTime: number;
     DoubanProxyType: string;
@@ -25,6 +27,11 @@ export interface AdminConfig {
     TMDBApiKey?: string;
     TMDBProxy?: string;
     TMDBReverseProxy?: string;
+    // 动漫/Bangumi配置
+    BangumiDataSource?: 'direct' | 'server-proxy' | 'custom-baseurl';
+    BangumiApiBaseUrl?: string;
+    BangumiImageBaseUrl?: string;
+    BangumiProxy?: string;
     BannerDataSource?: string; // 轮播图数据源：TMDB、TX 或 Douban
     RecommendationDataSource?: string; // 更多推荐数据源：Douban、TMDB、Mixed、MixedSmart
     // Pansou配置
@@ -37,6 +44,7 @@ export interface AdminConfig {
     MagnetMikanReverseProxy?: string;
     MagnetDmhyReverseProxy?: string;
     MagnetAcgripReverseProxy?: string;
+    MagnetNyaaReverseProxy?: string;
     // 评论功能开关
     EnableComments: boolean;
     // 自定义去广告代码
@@ -80,6 +88,7 @@ export interface AdminConfig {
       permissions?: string[];
     }[];
   };
+  SpecialSourceApis?: string[]; // 特殊源 key 列表，默认对普通入口隐藏
   SourceConfig: {
     key: string;
     name: string;
@@ -97,10 +106,11 @@ export interface AdminConfig {
     from: 'config' | 'custom';
     disabled?: boolean;
   }[];
+  LiveRefreshIntervalHours?: number; // 电视直播全局刷新间隔（小时），默认12小时
   LiveConfig?: {
     key: string;
     name: string;
-    url: string;  // m3u 地址
+    url: string; // m3u 地址
     ua?: string;
     epg?: string; // 节目单
     from: 'config' | 'custom';
@@ -140,6 +150,10 @@ export interface AdminConfig {
     RootPath?: string; // 旧字段：根目录路径（向后兼容，迁移后删除）
     RootPaths?: string[]; // 新字段：多根目录路径列表
     OfflineDownloadPath: string; // 离线下载目录，默认 "/"
+    OfflineDownloadUseCustomSource?: boolean; // 离线下载是否使用独立 OpenList 源
+    OfflineDownloadURL?: string; // 独立离线下载 OpenList 服务器地址
+    OfflineDownloadUsername?: string; // 独立离线下载 OpenList 账号
+    OfflineDownloadPassword?: string; // 独立离线下载 OpenList 密码
     LastRefreshTime?: number; // 上次刷新时间戳
     ResourceCount?: number; // 资源数量
     ScanInterval?: number; // 定时扫描间隔（分钟），0表示关闭，最低60分钟
@@ -151,6 +165,8 @@ export interface AdminConfig {
       Enabled: boolean;
       Cookie: string;
       SavePath: string;
+      PlayMode?: 'direct_first' | 'transcode_first';
+      MultiThreadPlayback?: boolean;
     };
     Mobile?: {
       Enabled: boolean;
@@ -248,6 +264,7 @@ export interface AdminConfig {
       transcodeMp4?: boolean; // 转码mp4
       proxyPlay?: boolean; // 视频播放代理开关
       customUserAgent?: string; // 自定义User-Agent
+      embyAuthorizationHeader?: string; // 自定义 X-Emby-Authorization 请求头
     }>;
     // 旧格式：单源配置（向后兼容）
     Enabled?: boolean;
@@ -258,6 +275,7 @@ export interface AdminConfig {
     UserId?: string;
     AuthToken?: string;
     Libraries?: string[];
+    embyAuthorizationHeader?: string;
     LastSyncTime?: number;
     ItemCount?: number;
   };
@@ -284,6 +302,7 @@ export interface AdminConfig {
     Sources?: Array<{
       id: string;
       name: string;
+      type?: 'opds';
       url: string;
       enabled?: boolean;
       authMode?: 'none' | 'basic' | 'header';
@@ -294,6 +313,16 @@ export interface AdminConfig {
       searchTemplate?: string;
       preferFormat?: Array<'epub' | 'pdf'>;
       language?: string;
+    }>;
+    LegadoSubscriptions?: Array<{
+      id: string;
+      name: string;
+      url: string;
+      enabled?: boolean;
+      sourceCount?: number;
+      lastSyncAt?: number;
+      lastSuccessAt?: number;
+      lastError?: string;
     }>;
     CacheTTL?: number;
   };
@@ -315,6 +344,19 @@ export interface AdminConfig {
       from: string; // 发件人邮箱
     };
   };
+  TelegramConfig?: {
+    enabled: boolean; // 是否启用 Telegram Bot
+    botToken?: string; // Bot Token，仅服务端使用
+    botUsername?: string; // Bot 用户名，用于前端跳转
+    webhookSecret?: string; // Webhook Secret Token
+    apiProxy?: string; // Telegram Bot API 系统代理（HTTP/HTTPS proxy）
+    apiBaseUrl?: string; // Telegram Bot API 反代 Base URL
+    loginEnabled?: boolean; // 是否启用 Telegram 登录
+    bindingEnabled?: boolean; // 是否启用用户绑定
+    registrationEnabled?: boolean; // 是否启用 Telegram 注册
+    notificationsEnabled?: boolean; // 是否启用 Telegram 通知
+    defaultNotifications?: boolean; // 新绑定用户默认开启通知
+  };
   MusicConfig?: {
     Enabled?: boolean; // 启用音乐功能
     BaseUrl?: string; // lxserver 地址
@@ -329,11 +371,12 @@ export interface AdminConfig {
   };
   AnimeSubscriptionConfig?: {
     Enabled: boolean; // 是否启用追番功能
+    DownloadTool?: 'aria2' | 'qBittorrent' | 'Transmission'; // 追番订阅全局下载方式
     Subscriptions: Array<{
       id: string;
       title: string;
       filterText: string;
-      source: 'acgrip' | 'mikan' | 'dmhy';
+      source: 'acgrip' | 'mikan' | 'dmhy' | 'nyaa';
       enabled: boolean;
       lastCheckTime: number;
       lastEpisode: number;
