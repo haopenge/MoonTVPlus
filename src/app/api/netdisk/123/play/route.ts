@@ -11,6 +11,7 @@ import {
 } from '@/lib/netdisk/pan123-session-cache';
 
 export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest) {
   try {
@@ -19,7 +20,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: '未授权' }, { status: 401 });
     }
 
-    const { searchParams } = new URL(request.url);
+    const { searchParams } = request.nextUrl;
     const sessionId = searchParams.get('id') || searchParams.get('session');
     const episodeIndexRaw = searchParams.get('episodeIndex');
     const format = searchParams.get('format');

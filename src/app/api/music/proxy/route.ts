@@ -4,13 +4,14 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireFeaturePermission } from '@/lib/permissions';
 
 export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
 
 // 代理音频流
 export async function GET(request: NextRequest) {
   try {
     const authResult = await requireFeaturePermission(request, 'music', '无权限访问音乐功能');
     if (authResult instanceof NextResponse) return authResult;
-    const { searchParams } = new URL(request.url);
+    const { searchParams } = request.nextUrl;
     const url = searchParams.get('url');
 
     if (!url) {
