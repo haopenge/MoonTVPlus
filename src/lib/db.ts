@@ -13,11 +13,14 @@ import {
   DanmakuFilterConfig,
   Favorite,
   IStorage,
+  LocalSettingsSyncRecord,
   PlayRecord,
+  SetLocalSettingsSyncOptions,
+  SetLocalSettingsSyncResult,
   SkipConfig,
 } from './types';
 
-// storage type 常量: 'localstorage' | 'redis' | 'upstash' | 'kvrocks' | 'd1' | 'postgres'，默认 'localstorage'
+// storage type 常量: 'localstorage' | 'redis' | 'upstash' | 'kvrocks' | 'd1' | 'postgres' | 'turso'，默认 'localstorage'
 const IS_CLOUDFLARE_BUILD =
   process.env.CF_PAGES === '1' || process.env.BUILD_TARGET === 'cloudflare';
 const STORAGE_TYPE =
@@ -28,6 +31,7 @@ const STORAGE_TYPE =
     | 'kvrocks'
     | 'd1'
     | 'postgres'
+    | 'turso'
     | undefined) || 'localstorage';
 
 // 创建存储实例
@@ -70,6 +74,15 @@ function createStorage(): IStorage {
       // 动态导入 PostgresStorage 以避免客户端打包
       const { PostgresStorage } = require('./postgres.db');
       return new PostgresStorage(postgresAdapter);
+    case 'turso':
+      // TursoStorage 只能在服务端使用，客户端会报错
+      if (typeof window !== 'undefined') {
+        throw new Error('TursoStorage can only be used on the server side');
+      }
+      const tursoAdapter = getTursoAdapter();
+      // 复用 D1Storage（Turso 基于 libSQL/SQLite，SQL 语法完全兼容）
+      const { D1Storage: TursoD1Storage } = require('./d1.db');
+      return new TursoD1Storage(tursoAdapter);
     case 'localstorage':
     default:
       return null as unknown as IStorage;
@@ -87,6 +100,29 @@ function getPostgresAdapter(): any {
   console.log('Using Vercel Postgres database');
 
   return new PostgresAdapter();
+}
+
+/**
+ * 获取 Turso 适配器
+ * 使用 @libsql/client 连接 Turso (libSQL) 远程数据库
+ * 适用于 EdgeOne Pages 等无内置数据库的边缘平台
+ */
+function getTursoAdapter(): any {
+  // 动态导入适配器以避免客户端打包
+  const { TursoAdapter } = require('./turso-adapter');
+
+  const tursoUrl = process.env.TURSO_URL;
+  const tursoToken = process.env.TURSO_TOKEN;
+
+  if (!tursoUrl || !tursoToken) {
+    throw new Error(
+      'TURSO_URL and TURSO_TOKEN env variables must be set for Turso storage'
+    );
+  }
+
+  console.log('Using Turso (libSQL) database');
+
+  return new TursoAdapter(tursoUrl, tursoToken);
 }
 
 /**
@@ -151,9 +187,6 @@ function getD1Adapter(): any {
   db.pragma('journal_mode = WAL'); // 启用 WAL 模式提升性能
   db.pragma('foreign_keys = ON'); // 与 D1 保持一致，启用外键约束
   db.pragma('busy_timeout = 5000'); // 避免启动阶段或并发写入时立即锁失败
-
-  console.log('Using SQLite database (non-Cloudflare mode)');
-  console.log('Database location:', dbPath);
 
   return new SQLiteAdapter(db);
 }
@@ -1005,6 +1038,28 @@ export class DbManager {
     if (typeof (this.storage as any).setAdminConfig === 'function') {
       await (this.storage as any).setAdminConfig(config);
     }
+  }
+
+  // ---------- 本地设置云同步 ----------
+  async getUserLocalSettings(
+    userName: string
+  ): Promise<LocalSettingsSyncRecord | null> {
+    if (typeof (this.storage as any).getUserLocalSettings === 'function') {
+      return (this.storage as any).getUserLocalSettings(userName);
+    }
+    return null;
+  }
+
+  async setUserLocalSettings(
+    userName: string,
+    payload: string,
+    opts: SetLocalSettingsSyncOptions
+  ): Promise<SetLocalSettingsSyncResult> {
+    if (typeof (this.storage as any).setUserLocalSettings === 'function') {
+      return (this.storage as any).setUserLocalSettings(userName, payload, opts);
+    }
+    // 存储后端不支持时静默忽略（等价于从未开启）
+    return { ok: true, version: 0, updatedAt: Date.now() };
   }
 
   // ---------- 跳过片头片尾配置 ----------

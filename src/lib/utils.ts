@@ -2,13 +2,14 @@
 import bs58 from 'bs58';
 import he from 'he';
 
+import { getTmdbImageBaseUrl } from './tmdb-image-base';
+
 export type DoubanImageProxyType =
   | 'direct'
   | 'server'
   | 'img3'
   | 'cmliussss-cdn-tencent'
   | 'cmliussss-cdn-ali'
-  | 'baidu'
   | 'custom';
 
 function normalizeDoubanImageProxyConfig(
@@ -53,10 +54,6 @@ function buildDoubanImageUrl(
         /img\d+\.doubanio\.com/g,
         'img.doubanio.cmliussss.com'
       );
-    case 'baidu':
-      return `https://image.baidu.com/search/down?url=${encodeURIComponent(
-        originalUrl
-      )}`;
     case 'custom':
       return proxyUrl
         ? `${proxyUrl}${encodeURIComponent(originalUrl)}`
@@ -140,22 +137,64 @@ function isBangumiImageUrl(url: string): boolean {
     return (
       hostname === 'lain.bgm.tv' ||
       hostname === 'r.bgm.tv' ||
+      hostname === 'bangumi.lol' ||
       hostname.endsWith('.bgm.tv') ||
-      hostname.endsWith('.bangumi.tv')
+      hostname.endsWith('.bangumi.tv') ||
+      hostname.endsWith('.bangumi.lol')
     );
   } catch {
     return false;
   }
 }
 
-type AnimeImageSource = 'direct' | 'server-proxy' | 'custom-baseurl';
+type AnimeImageSource =
+  | 'direct'
+  | 'server-proxy'
+  | 'custom-baseurl'
+  | 'sakura';
 
 const BANGUMI_IMAGE_FALLBACK_UNTIL_KEY = 'bangumiImageFallbackUntil';
 const BANGUMI_IMAGE_FALLBACK_SIGNATURE_KEY = 'bangumiImageFallbackSignature';
 const BANGUMI_IMAGE_FALLBACK_DURATION = 60 * 60 * 1000;
+/** 探测主源图片域主页超时（404 也算通） */
+const BANGUMI_IMAGE_PROBE_TIMEOUT_MS = 5000;
+/** 探测成功后的内存缓存，避免列表刷屏时重复探测 */
+const BANGUMI_IMAGE_PROBE_OK_TTL_MS = 15 * 60 * 1000;
+
+type BangumiImageProbeCache = {
+  signature: string;
+  reachable: boolean | null;
+  okUntil: number;
+  inflight: Promise<boolean> | null;
+};
+
+let bangumiImageProbeCache: BangumiImageProbeCache = {
+  signature: '',
+  reachable: null,
+  okUntil: 0,
+  inflight: null,
+};
 
 function normalizeBaseUrl(baseUrl: string): string {
   return baseUrl.trim().replace(/\/+$/, '');
+}
+
+/** 官方域名 → 桜色镜像站（bgm.tv → bangumi.lol 等） */
+function rewriteBangumiUrlToSakura(url: string): string {
+  try {
+    const parsed = new URL(url);
+    const hostname = parsed.hostname.toLowerCase();
+    if (hostname === 'bgm.tv' || hostname === 'bangumi.tv') {
+      parsed.hostname = 'bangumi.lol';
+    } else if (hostname.endsWith('.bgm.tv')) {
+      parsed.hostname = `${hostname.slice(0, -'.bgm.tv'.length)}.bangumi.lol`;
+    } else if (hostname.endsWith('.bangumi.tv')) {
+      parsed.hostname = `${hostname.slice(0, -'.bangumi.tv'.length)}.bangumi.lol`;
+    }
+    return parsed.toString();
+  } catch {
+    return url;
+  }
 }
 
 function normalizeAnimeImageSource(
@@ -163,7 +202,8 @@ function normalizeAnimeImageSource(
 ): AnimeImageSource {
   return value === 'server-proxy' ||
     value === 'custom-baseurl' ||
-    value === 'direct'
+    value === 'direct' ||
+    value === 'sakura'
     ? value
     : 'direct';
 }
@@ -214,10 +254,55 @@ function getBangumiImageFallbackSignature(): string {
   });
 }
 
-export function clearBangumiImageFallbackCache(): void {
+function getBangumiImageProbeSignature(): string {
+  return JSON.stringify({
+    primary: getPrimaryBangumiImageSource(),
+    imageBaseUrl: getBangumiImageBaseUrl(),
+  });
+}
+
+/** 当前主源图片域 origin；server-proxy 无需探测返回 null */
+function getBangumiImageProbeOrigin(): string | null {
+  const primary = getPrimaryBangumiImageSource();
+  switch (primary) {
+    case 'server-proxy':
+      return null;
+    case 'sakura':
+      return 'https://lain.bangumi.lol';
+    case 'custom-baseurl': {
+      const base = getBangumiImageBaseUrl();
+      if (!base) return 'https://lain.bgm.tv';
+      try {
+        return new URL(base).origin;
+      } catch {
+        return null;
+      }
+    }
+    case 'direct':
+    default:
+      return 'https://lain.bgm.tv';
+  }
+}
+
+export function clearBangumiImageProbeCache(): void {
+  bangumiImageProbeCache = {
+    signature: '',
+    reachable: null,
+    okUntil: 0,
+    inflight: null,
+  };
+}
+
+/** 仅清除 localStorage 中的 sticky 降级标记，不动内存探测缓存（热路径调用） */
+function clearBangumiImageFallbackFlags(): void {
   if (typeof window === 'undefined') return;
   localStorage.removeItem(BANGUMI_IMAGE_FALLBACK_UNTIL_KEY);
   localStorage.removeItem(BANGUMI_IMAGE_FALLBACK_SIGNATURE_KEY);
+}
+
+export function clearBangumiImageFallbackCache(): void {
+  clearBangumiImageFallbackFlags();
+  clearBangumiImageProbeCache();
 }
 
 export function markBangumiImageFallbackActive(): void {
@@ -230,6 +315,92 @@ export function markBangumiImageFallbackActive(): void {
     BANGUMI_IMAGE_FALLBACK_SIGNATURE_KEY,
     getBangumiImageFallbackSignature()
   );
+}
+
+/**
+ * 探测主源图片域是否可达：请求 origin 主页（常见 404），5s 超时 + 防缓存。
+ * no-cors 下任意完成（含 404）视为可达；超时/DNS/断网视为不可达。
+ * 失败时写入 sticky 降级（若有备源）。全局单飞 + 成功缓存 15 分钟。
+ * @returns true=主源可用，false=应走备源
+ */
+export async function ensureBangumiImagePrimaryProbed(): Promise<boolean> {
+  if (typeof window === 'undefined') return true;
+
+  if (isBangumiImageFallbackActive()) {
+    return false;
+  }
+
+  const origin = getBangumiImageProbeOrigin();
+  if (!origin) {
+    return true;
+  }
+
+  const signature = getBangumiImageProbeSignature();
+  const now = Date.now();
+
+  if (
+    bangumiImageProbeCache.signature === signature &&
+    bangumiImageProbeCache.reachable === true &&
+    bangumiImageProbeCache.okUntil > now
+  ) {
+    return true;
+  }
+
+  if (
+    bangumiImageProbeCache.signature === signature &&
+    bangumiImageProbeCache.inflight
+  ) {
+    return bangumiImageProbeCache.inflight;
+  }
+
+  const probePromise = (async (): Promise<boolean> => {
+    const url = `${origin}/?_cb=${Date.now()}_${Math.random()
+      .toString(36)
+      .slice(2, 10)}`;
+    try {
+      await fetch(url, {
+        method: 'GET',
+        mode: 'no-cors',
+        cache: 'no-store',
+        credentials: 'omit',
+        signal: AbortSignal.timeout(BANGUMI_IMAGE_PROBE_TIMEOUT_MS),
+      });
+      bangumiImageProbeCache = {
+        signature,
+        reachable: true,
+        okUntil: Date.now() + BANGUMI_IMAGE_PROBE_OK_TTL_MS,
+        inflight: null,
+      };
+      return true;
+    } catch {
+      bangumiImageProbeCache = {
+        signature,
+        reachable: false,
+        okUntil: 0,
+        inflight: null,
+      };
+      const primary = getPrimaryBangumiImageSource();
+      if (getBackupBangumiImageSource(primary)) {
+        markBangumiImageFallbackActive();
+      }
+      return false;
+    }
+  })();
+
+  bangumiImageProbeCache = {
+    signature,
+    reachable: bangumiImageProbeCache.reachable,
+    okUntil: bangumiImageProbeCache.okUntil,
+    inflight: probePromise,
+  };
+
+  return probePromise;
+}
+
+/** 非阻塞触发主源图片域探测（processImageUrl / 首屏侧调用） */
+export function scheduleBangumiImagePrimaryProbe(): void {
+  if (typeof window === 'undefined') return;
+  void ensureBangumiImagePrimaryProbed();
 }
 
 function normalizeComparableUrl(url: string): string {
@@ -278,13 +449,13 @@ function isBangumiImageFallbackActive(): boolean {
 
   const until = Number(localStorage.getItem(BANGUMI_IMAGE_FALLBACK_UNTIL_KEY));
   if (!until || Date.now() >= until) {
-    clearBangumiImageFallbackCache();
+    clearBangumiImageFallbackFlags();
     return false;
   }
 
   const signature = localStorage.getItem(BANGUMI_IMAGE_FALLBACK_SIGNATURE_KEY);
   if (signature !== getBangumiImageFallbackSignature()) {
-    clearBangumiImageFallbackCache();
+    clearBangumiImageFallbackFlags();
     return false;
   }
 
@@ -304,6 +475,8 @@ function buildBangumiImageUrl(
       const imageBaseUrl = getBangumiImageBaseUrl();
       return imageBaseUrl ? `${imageBaseUrl}/${originalUrl}` : originalUrl;
     }
+    case 'sakura':
+      return rewriteBangumiUrlToSakura(originalUrl);
     case 'direct':
     default:
       return originalUrl;
@@ -402,11 +575,24 @@ export function processImageUrl(originalUrl: string): string {
   // 处理 TMDB 图片 URL 替换
   if (originalUrl.includes('image.tmdb.org')) {
     if (typeof window !== 'undefined') {
-      const tmdbImageBaseUrl =
-        localStorage.getItem('tmdbImageBaseUrl') || 'https://image.tmdb.org';
-      // 只有当用户设置了不同的 baseUrl 时才进行替换
+      const tmdbImageBaseUrl = getTmdbImageBaseUrl();
+      // 与默认地址一致时无需替换
       if (tmdbImageBaseUrl !== 'https://image.tmdb.org') {
-        return originalUrl.replace('https://image.tmdb.org', tmdbImageBaseUrl);
+        // 已带有配置的图片前缀时直接返回，避免重复嵌套拼接
+        if (originalUrl.startsWith(tmdbImageBaseUrl)) {
+          return originalUrl;
+        }
+        // 仅替换开头的官方图片地址，避免对已拼接的 URL 再次追加前缀
+        for (const officialBase of [
+          'https://image.tmdb.org',
+          'http://image.tmdb.org',
+        ]) {
+          if (originalUrl.startsWith(officialBase)) {
+            return (
+              tmdbImageBaseUrl + originalUrl.slice(officialBase.length)
+            );
+          }
+        }
       }
     }
     return originalUrl;
@@ -414,11 +600,15 @@ export function processImageUrl(originalUrl: string): string {
 
   // 处理 Bangumi 图片代理。直连模式尊重用户选择，不代理图片；
   // 仅在服务器代理 / 自定义 Base URL 模式下使用本站图片代理。
+  // sticky 降级中走备源；否则用主源，并非阻塞探测主源图片域主页（5s，404 算通）。
   if (isBangumiImageUrl(originalUrl)) {
     const primary = getPrimaryBangumiImageSource();
     const backup = getBackupBangumiImageSource(primary);
     if (backup && isBangumiImageFallbackActive()) {
       return buildBangumiImageUrl(originalUrl, backup);
+    }
+    if (primary !== 'server-proxy' && backup) {
+      scheduleBangumiImagePrimaryProbe();
     }
     return buildBangumiImageUrl(originalUrl, primary);
   }
@@ -490,6 +680,22 @@ export function processVideoUrl(originalUrl: string): string {
         /https?:\/\/img\d\.doubanio\.com/g,
         'https://douban-img.cmliussss.workers.dev'
       );
+  }
+}
+
+/**
+ * 测速失败类型：
+ * - timeout：源可达但在超时窗口内没能拿到元数据/首片（太慢）
+ * - unreachable：网络错误、CORS、404、HLS 解析失败等，源无法访问
+ */
+export type SpeedTestErrorType = 'timeout' | 'unreachable';
+
+export class SpeedTestError extends Error {
+  type: SpeedTestErrorType;
+  constructor(type: SpeedTestErrorType, message: string) {
+    super(message);
+    this.name = 'SpeedTestError';
+    this.type = type;
   }
 }
 
@@ -580,7 +786,9 @@ export async function getVideoResolutionFromM3u8(
         } else {
           hls.destroy();
           video.remove();
-          reject(new Error('Timeout loading video metadata'));
+          reject(
+            new SpeedTestError('timeout', 'Timeout loading video metadata')
+          );
         }
       }, timeoutMs);
 
@@ -588,7 +796,9 @@ export async function getVideoResolutionFromM3u8(
         clearTimeout(timeout);
         hls.destroy();
         video.remove();
-        reject(new Error('Failed to load video metadata'));
+        reject(
+          new SpeedTestError('unreachable', 'Failed to load video metadata')
+        );
       };
 
       let fragmentStartTime = 0;
@@ -697,7 +907,17 @@ export async function getVideoResolutionFromM3u8(
           clearTimeout(timeout);
           hls.destroy();
           video.remove();
-          reject(new Error(`HLS播放失败: ${data.type}`));
+          // HLS 的 *TimeOut 类 details（manifestLoadTimeOut 等）归为超时，
+          // 其余致命错误（网络不可达、404、解析失败）归为无法访问
+          const details =
+            typeof data.details === 'string' ? data.details : '';
+          const isTimeout = details.toLowerCase().includes('timeout');
+          reject(
+            new SpeedTestError(
+              isTimeout ? 'timeout' : 'unreachable',
+              `HLS播放失败: ${data.type}`
+            )
+          );
         }
       });
 

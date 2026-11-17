@@ -40,6 +40,16 @@ export async function generateMetadata(): Promise<Metadata> {
     title: siteName,
     description: '影视聚合',
     manifest: '/manifest.json',
+    // 供配套浏览器扩展（moontvplus-extension）识别本站部署（勿删）
+    other: {
+      'moontvplus-site': '1',
+    },
+    // iOS 添加到主屏幕：沉浸式状态栏（需配合 viewport-fit=cover + 顶部 safe-area）
+    appleWebApp: {
+      capable: true,
+      statusBarStyle: 'black-translucent',
+      title: siteName,
+    },
   };
 }
 
@@ -75,6 +85,7 @@ export default async function RootLayout({
   let danmakuAutoLoadDefault = true;
   let recommendationDataSource = 'Mixed';
   let tmdbApiKey = '';
+  let tmdbImageBaseUrl = 'https://image.tmdb.org';
   let bangumiDataSource =
     (process.env.NEXT_PUBLIC_BANGUMI_DATA_SOURCE as any) || 'direct';
   let bangumiApiBaseUrl =
@@ -94,6 +105,8 @@ export default async function RootLayout({
   let progressThumbType = 'default';
   let progressThumbPresetId = '';
   let progressThumbCustomUrl = '';
+  let loadingStyle = 'talisman';
+  let rateBadgeStyle = 'flag';
   let enableRegistration = false;
   let requireRegistrationInviteCode = false;
   let loginRequireTurnstile = false;
@@ -115,6 +128,11 @@ export default async function RootLayout({
   let liveEnabled = true;
   let webLiveEnabled = false;
   let customAdFilterVersion = 0;
+  let analyticsEnabled = false;
+  let analyticsProvider: 'umami' | 'google' | 'clarity' | 'custom' = 'umami';
+  let analyticsScriptUrl = '';
+  let analyticsWebsiteId = '';
+  let analyticsCustomScript = '';
   let musicFeatureEnabled = false;
   let suwayomiEnabled = false;
   let booksEnabled =
@@ -122,6 +140,11 @@ export default async function RootLayout({
     process.env.LEGADO_ENABLED === 'true';
   let musicProxyEnabled = true;
   let advancedRecommendationEnabled = false;
+  let localSettingsSyncMode: 'off' | 'manual' | 'auto' = 'off';
+  // 特殊源名单：供客户端按入口隔离收藏与播放记录。
+  // 入口开关是本机 cookie，与存储模式无关，所以 localstorage 模式也要注入；
+  // getConfig() 有模块级缓存，generateMetadata 里已经调过一次，这里不产生额外读取。
+  const specialSourceApis = (await getConfig()).SpecialSourceApis || [];
   let userFeatureAccess =
     storageType === 'localstorage'
       ? await getUserFeatureAccess(process.env.USERNAME || 'localstorage-owner')
@@ -160,6 +183,8 @@ export default async function RootLayout({
     recommendationDataSource =
       config.SiteConfig.RecommendationDataSource || 'Mixed';
     tmdbApiKey = config.SiteConfig.TMDBApiKey || '';
+    tmdbImageBaseUrl =
+      config.SiteConfig.TMDBImageBaseUrl || 'https://image.tmdb.org';
     bangumiDataSource = config.SiteConfig.BangumiDataSource || 'direct';
     bangumiApiBaseUrl =
       config.SiteConfig.BangumiApiBaseUrl || 'https://api.bgm.tv';
@@ -170,6 +195,20 @@ export default async function RootLayout({
     progressThumbType = config.ThemeConfig?.progressThumbType || 'default';
     progressThumbPresetId = config.ThemeConfig?.progressThumbPresetId || '';
     progressThumbCustomUrl = config.ThemeConfig?.progressThumbCustomUrl || '';
+    // 白名单兜底：值异常时回落到魔法阵（现行默认），避免三种款式都不显示
+    loadingStyle =
+      config.ThemeConfig?.loadingStyle === 'classic' ||
+      config.ThemeConfig?.loadingStyle === 'grid' ||
+      config.ThemeConfig?.loadingStyle === 'talisman'
+        ? config.ThemeConfig.loadingStyle
+        : 'talisman';
+    // 白名单兜底：值异常时回落到默认锦旗徽章
+    rateBadgeStyle =
+      config.ThemeConfig?.rateBadgeStyle === 'default' ||
+      config.ThemeConfig?.rateBadgeStyle === 'flag' ||
+      config.ThemeConfig?.rateBadgeStyle === 'medal'
+        ? config.ThemeConfig.rateBadgeStyle
+        : 'flag';
     enableRegistration = config.SiteConfig.EnableRegistration || false;
     requireRegistrationInviteCode =
       config.SiteConfig.RequireRegistrationInviteCode || false;
@@ -202,6 +241,12 @@ export default async function RootLayout({
     webLiveEnabled = config.WebLiveEnabled ?? false;
     // 自定义去广告代码版本号
     customAdFilterVersion = config.SiteConfig?.CustomAdFilterVersion || 0;
+    // 流量统计配置
+    analyticsEnabled = config.SiteConfig?.AnalyticsEnabled || false;
+    analyticsProvider = config.SiteConfig?.AnalyticsProvider || 'umami';
+    analyticsScriptUrl = config.SiteConfig?.AnalyticsScriptUrl || '';
+    analyticsWebsiteId = config.SiteConfig?.AnalyticsWebsiteId || '';
+    analyticsCustomScript = config.SiteConfig?.AnalyticsCustomScript || '';
     // 音乐功能配置
     musicFeatureEnabled = config.MusicConfig?.Enabled || false;
     musicProxyEnabled = config.MusicConfig?.ProxyEnabled ?? true;
@@ -234,6 +279,11 @@ export default async function RootLayout({
     xiaoyaEnabled = !!(
       config.XiaoyaConfig?.Enabled && config.XiaoyaConfig?.ServerURL
     );
+    localSettingsSyncMode =
+      config.SiteConfig?.LocalSettingsSyncMode === 'manual' ||
+      config.SiteConfig?.LocalSettingsSyncMode === 'auto'
+        ? config.SiteConfig.LocalSettingsSyncMode
+        : 'off';
   }
 
   // 将运行时配置注入到全局 window 对象，供客户端在运行时读取
@@ -249,6 +299,7 @@ export default async function RootLayout({
   const runtimeConfig = {
     STORAGE_TYPE: runtimeStorageType,
     DISPLAY_STORAGE_TYPE: displayStorageType,
+    LOCAL_SETTINGS_SYNC_MODE: localSettingsSyncMode,
     DOUBAN_PROXY_TYPE: doubanProxyType,
     DOUBAN_PROXY: doubanProxy,
     DOUBAN_IMAGE_PROXY_TYPE: doubanImageProxyType,
@@ -259,6 +310,7 @@ export default async function RootLayout({
     EnableComments: enableComments,
     DANMAKU_AUTO_LOAD_DEFAULT: danmakuAutoLoadDefault,
     RecommendationDataSource: recommendationDataSource,
+    TMDB_IMAGE_BASE_URL: tmdbImageBaseUrl,
     BANGUMI_DATA_SOURCE: bangumiDataSource,
     BANGUMI_API_BASE_URL: bangumiApiBaseUrl,
     BANGUMI_IMAGE_BASE_URL: bangumiImageBaseUrl,
@@ -316,11 +368,20 @@ export default async function RootLayout({
     NETDISK_TRANSFER_ENABLED: userFeatureAccess.netdisk_transfer,
     NETDISK_TEMP_PLAY_ENABLED: userFeatureAccess.netdisk_temp_play,
     FESTIVE_EFFECT_ENABLED: process.env.FESTIVE_EFFECT_ENABLED === 'true',
+    SPECIAL_SOURCE_APIS: specialSourceApis,
+    RATE_BADGE_STYLE: rateBadgeStyle,
   };
 
   return (
-    <html lang='zh-CN' suppressHydrationWarning>
+    <html
+      lang='zh-CN'
+      data-moontvplus='1'
+      data-loading-style={loadingStyle}
+      suppressHydrationWarning
+    >
       <head>
+        {/* 配套 moontvplus-extension 识别指纹；仅本项目部署站应带此标记 */}
+        <meta name='moontvplus-site' content='1' />
         <meta
           name='viewport'
           content='width=device-width, initial-scale=1.0, viewport-fit=cover'
@@ -335,6 +396,44 @@ export default async function RootLayout({
             __html: `window.RUNTIME_CONFIG = ${JSON.stringify(runtimeConfig)};`,
           }}
         />
+        {/* 流量统计脚本 */}
+        {analyticsEnabled && analyticsProvider === 'umami' && analyticsScriptUrl && (
+          <>
+            {/* eslint-disable-next-line @next/next/no-sync-scripts */}
+            <script
+              async
+              defer
+              data-website-id={analyticsWebsiteId}
+              src={analyticsScriptUrl}
+            />
+          </>
+        )}
+        {analyticsEnabled && analyticsProvider === 'google' && analyticsWebsiteId && (
+          <>
+            {/* eslint-disable-next-line @next/next/no-sync-scripts */}
+            <script
+              async
+              src={`https://www.googletagmanager.com/gtag/js?id=${analyticsWebsiteId}`}
+            />
+            <script
+              dangerouslySetInnerHTML={{
+                __html: `window.dataLayer = window.dataLayer || [];function gtag(){dataLayer.push(arguments);}gtag('js', new Date());gtag('config', '${analyticsWebsiteId}');`,
+              }}
+            />
+          </>
+        )}
+        {analyticsEnabled && analyticsProvider === 'clarity' && analyticsWebsiteId && (
+          <script
+            dangerouslySetInnerHTML={{
+              __html: `(function(c,l,a,r,i,t,y){c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};t=l.createElement(r);t.async=1;t.src="https://www.clarity.ms/tag/"+i;y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);})(window,document,"clarity","script","${analyticsWebsiteId}");`,
+            }}
+          />
+        )}
+        {analyticsEnabled && analyticsProvider === 'custom' && analyticsCustomScript && (
+          <script
+            dangerouslySetInnerHTML={{ __html: analyticsCustomScript }}
+          />
+        )}
       </head>
       <body
         className={`${inter.className} min-h-screen bg-white text-gray-900 dark:bg-black dark:text-gray-200`}

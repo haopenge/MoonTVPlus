@@ -70,30 +70,97 @@ import {
 
 export const runtime = 'nodejs';
 
+/**
+ * 解析站点 origin。
+ * 优先级：SITE_BASE（站点 url 环境变量）> NEXT_PUBLIC_SITE_URL > 请求头 Host。
+ */
+function getRequestSiteOrigin(request: NextRequest): string {
+  const fromEnv =
+    (process.env.SITE_BASE || '').trim() ||
+    (process.env.NEXT_PUBLIC_SITE_URL || '').trim();
+
+  if (fromEnv) {
+    return fromEnv.replace(/\/$/, '');
+  }
+
+  let host =
+    request.headers.get('host') || request.headers.get('x-forwarded-host');
+
+  if (host && !/^[a-zA-Z0-9.-]+(:\d+)?$/.test(host)) {
+    host = null;
+  }
+
+  if (!host) {
+    try {
+      host = new URL(request.url).host;
+    } catch {
+      host = 'localhost';
+    }
+  }
+
+  const proto =
+    request.headers.get('x-forwarded-proto') ||
+    (host.includes('localhost') || host.includes('127.0.0.1')
+      ? 'http'
+      : 'https');
+
+  return `${proto}://${host}`.replace(/\/$/, '');
+}
+
+/**
+ * MoonTVPlus APP / OrionTV 客户端：对配置的视频源 m3u8 套一层去广告代理。
+ * UA 小写包含 "moontvplus app" 或 "oriontv" 时生效（不匹配仅含 moontvplus 的其它客户端）。
+ */
+function applyClientAdProxyToEpisodes(
+  request: NextRequest,
+  sourceCode: string,
+  episodes: string[] | undefined,
+  clientAdSourceApis: string[] | undefined
+): string[] | undefined {
+  if (!episodes || episodes.length === 0) return episodes;
+  if (!clientAdSourceApis || !clientAdSourceApis.includes(sourceCode)) {
+    return episodes;
+  }
+
+  const ua = (request.headers.get('user-agent') || '').toLowerCase();
+  if (!ua.includes('moontvplus app') && !ua.includes('oriontv')) {
+    return episodes;
+  }
+
+  const origin = getRequestSiteOrigin(request);
+  return episodes.map((episode) => {
+    if (!episode || typeof episode !== 'string') return episode;
+    if (
+      episode.includes('/api/proxy-m3u8') ||
+      episode.includes('/api/proxy/vod/m3u8')
+    ) {
+      return episode;
+    }
+    // 仅处理 http(s) 直链 m3u8，站内相对播放地址不改写
+    if (!/^https?:\/\//i.test(episode)) return episode;
+    return `${origin}/api/proxy-m3u8?url=${encodeURIComponent(episode)}`;
+  });
+}
+
+/**
+ * 网盘集标题：保留完整文件名（去掉常见视频扩展名），
+ * 供前端选集按钮长按/右键查看全名；按钮短标签仍由前端从文件名提取集数。
+ * `parsed` 仅用于排序，不再覆盖为「第N集」。
+ */
 function formatNetdiskEpisodeTitle(
-  parsed: {
+  _parsed: {
     season?: number;
     episode?: number;
   },
   fallback: string
 ) {
-  if (parsed.season && parsed.episode) {
-    const season = String(Math.trunc(parsed.season)).padStart(2, '0');
-    const episodeValue = parsed.episode;
-    const episode = Number.isInteger(episodeValue)
-      ? String(Math.trunc(episodeValue)).padStart(2, '0')
-      : String(episodeValue);
-    return `S${season}E${episode}`;
-  }
-
-  if (parsed.episode) {
-    const episodeValue = parsed.episode;
-    return Number.isInteger(episodeValue)
-      ? `第${Math.trunc(episodeValue)}集`
-      : `第${episodeValue}集`;
-  }
-
-  return fallback;
+  const name = (fallback || '').trim();
+  if (!name) return fallback;
+  // 去掉末尾视频扩展名，保留完整可读文件名
+  return name.replace(
+    /\.(mp4|mkv|ts|m2ts|avi|mov|wmv|flv|webm|m4v|rmvb|iso|mpg|mpeg|m3u8)$/i,
+    ''
+  );
 }
 
 /**
@@ -111,7 +178,7 @@ export async function GET(request: NextRequest) {
   const sourceCode = normalizeNetdiskSource(searchParams.get('source'));
   const fileName = searchParams.get('fileName'); // 小雅源：用户点击的文件名
   const title = searchParams.get('title');
-  const includeSpecialSources = searchParams.get('special') === '1';
+  const specialOnly = searchParams.get('special') === '1';
 
   if (!id || !sourceCode) {
     return NextResponse.json({ error: '缺少必要参数' }, { status: 400 });
@@ -988,8 +1055,6 @@ export async function GET(request: NextRequest) {
         throw new Error('OpenList 未配置或未启用');
       }
 
-      const rootPath = openListConfig.RootPath || '/';
-
       // 1. 读取 metainfo 获取元数据
       let metaInfo: any = null;
       let folderMeta: any = null;
@@ -1018,26 +1083,27 @@ export async function GET(request: NextRequest) {
         throw new Error('读取视频信息失败: ' + (error as Error).message);
       }
 
-      // 使用 folderName 构建实际路径
+      // 使用 folderName 构建实际路径（folderName 可能带「源名@」前缀，需解析出源与真实路径）
       const folderName = folderMeta.folderName;
-      const folderPath = `${rootPath}${
-        rootPath.endsWith('/') ? '' : '/'
-      }${folderName}`;
+      const { resolveFolderSource, createClientForSource } = await import('@/lib/openlist-sources');
+      const resolved = resolveFolderSource(config, folderName);
+      if (!resolved) {
+        throw new Error('OpenList 未配置');
+      }
+      const { source } = resolved;
+      const folderPath = resolved.path;
 
       // 2. 直接调用 OpenList 客户端获取视频列表
-      const { OpenListClient } = await import('@/lib/openlist.client');
       const { getCachedVideoInfo, setCachedVideoInfo } = await import(
         '@/lib/openlist-cache'
       );
-      const { parseVideoFileName } = await import('@/lib/video-parser');
+      const { formatEpisodeDisplayTitle, parseVideoFileName } = await import('@/lib/video-parser');
 
-      const client = new OpenListClient(
-        openListConfig.URL,
-        openListConfig.Username,
-        openListConfig.Password
-      );
+      const client = createClientForSource(source);
 
-      let videoInfo = getCachedVideoInfo(folderPath);
+      // 缓存键用带源前缀的完整路径（与 detail 路由保持一致）
+      const cacheKey = folderName;
+      let videoInfo = getCachedVideoInfo(cacheKey);
 
       // 获取所有分页的视频文件
       const allFiles: any[] = [];
@@ -1109,8 +1175,15 @@ export async function GET(request: NextRequest) {
             isOVA: parsed.isOVA,
           };
         }
-        setCachedVideoInfo(folderPath, videoInfo);
+        setCachedVideoInfo(cacheKey, videoInfo);
       }
+
+      const parsedSeasons = new Set(
+        videoFiles
+          .map((file) => parseVideoFileName(file.name).season)
+          .filter((season): season is number => typeof season === 'number')
+      );
+      const hasMultipleSeasons = parsedSeasons.size > 1;
 
       const episodes = videoFiles
         .map((file, index) => {
@@ -1132,11 +1205,12 @@ export async function GET(request: NextRequest) {
               parsed_from: 'filename',
             };
           }
-          let displayTitle = episodeInfo.title;
-          if (!displayTitle && episodeInfo.episode) {
-            displayTitle = episodeInfo.isOVA
-              ? `OVA ${episodeInfo.episode}`
-              : `第${episodeInfo.episode}集`;
+          let displayTitle = formatEpisodeDisplayTitle(
+            { episode: episodeInfo.episode, season: episodeInfo.season, isOVA: episodeInfo.isOVA },
+            hasMultipleSeasons
+          );
+          if (!displayTitle) {
+            displayTitle = episodeInfo.title;
           }
           if (!displayTitle) {
             displayTitle = file.name;
@@ -1161,6 +1235,13 @@ export async function GET(request: NextRequest) {
 
       // 3. 从 metainfo 中获取元数据
       const { getTMDBImageUrl } = await import('@/lib/tmdb.search');
+      const { resolvePathMetaForSource } = await import('@/lib/openlist-path-meta');
+      // folderName 为 metainfo 完整路径，PathMeta 按「真实路径 + 源」匹配
+      const pathMetaResolved = resolvePathMetaForSource(
+        source.name,
+        folderPath,
+        openListConfig.PathMeta
+      );
 
       const result = {
         source: 'openlist',
@@ -1183,6 +1264,8 @@ export async function GET(request: NextRequest) {
         ),
         episodes_titles: episodes.map((ep) => ep.title),
         proxyMode: false, // openlist 源不使用代理模式
+        category: pathMetaResolved.category || undefined,
+        refresh14m: pathMetaResolved.refresh14m,
       };
 
       return NextResponse.json(result);
@@ -1200,7 +1283,7 @@ export async function GET(request: NextRequest) {
 
   // 对于其他采集源，直接按 id 获取详情。
   try {
-    const apiSites = await getAvailableApiSites(authInfo.username, includeSpecialSources);
+    const apiSites = await getAvailableApiSites(authInfo.username, specialOnly);
     const apiSite = apiSites.find((site) => site.key === sourceCode);
 
     if (!apiSite) {
@@ -1215,7 +1298,31 @@ export async function GET(request: NextRequest) {
       proxyMode: apiSite.proxyMode || false,
     };
 
+    // 客户端广告配置：指定源 + APP/OrionTV UA 时 m3u8 套 proxy-m3u8
+    const adminConfig = await getConfig();
+    const clientAdEnabled = (adminConfig.ClientAdSourceApis || []).includes(
+      sourceCode
+    );
+    resultWithProxy.episodes =
+      applyClientAdProxyToEpisodes(
+        request,
+        sourceCode,
+        resultWithProxy.episodes,
+        adminConfig.ClientAdSourceApis
+      ) || resultWithProxy.episodes;
+
     const cacheTime = await getCacheTime();
+
+    // 同一源在不同 UA 下 episodes 可能不同，避免 CDN/共享缓存串号
+    if (clientAdEnabled) {
+      return NextResponse.json(resultWithProxy, {
+        headers: {
+          'Cache-Control': 'private, no-store',
+          Vary: 'User-Agent',
+          'Netlify-Vary': 'query',
+        },
+      });
+    }
 
     return NextResponse.json(resultWithProxy, {
       headers: {

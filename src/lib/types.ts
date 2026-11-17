@@ -15,6 +15,12 @@ export interface PlayRecord {
   save_time: number; // 记录保存时间（时间戳）
   search_title: string; // 搜索时使用的标题
   new_episodes?: number; // 新增的剧集数量（用于显示更新提示）
+  origin?: 'vod' | 'live';
+  /** 是否动漫（写入时根据 CMS type_name/class 判断） */
+  is_anime?: boolean;
+  /** 是否短剧（短剧竖屏页写入；普通播放页按 CMS type_name/class 判断）。
+      继续观看据此改用 /duanju/play 进去。 */
+  is_duanju?: boolean;
 }
 
 // 收藏数据结构
@@ -274,6 +280,35 @@ export interface IStorage {
   getTvboxSubscribeToken?(userName: string): Promise<string | null>;
   setTvboxSubscribeToken?(userName: string, token: string): Promise<void>;
   getUsernameByTvboxToken?(token: string): Promise<string | null>;
+
+  // 本地设置云同步相关（可选，各存储后端按需实现）
+  getUserLocalSettings?(userName: string): Promise<LocalSettingsSyncRecord | null>;
+  setUserLocalSettings?(
+    userName: string,
+    payload: string,
+    opts: SetLocalSettingsSyncOptions
+  ): Promise<SetLocalSettingsSyncResult>;
+}
+
+// 本地设置云同步记录（与关系型表 user_local_settings 逐列对应；Redis 存为单 JSON 文档）
+export interface LocalSettingsSyncRecord {
+  payload: string; // 本地设置 JSON 快照 { version, data, updatedAt }
+  payloadMd5: string; // payload 摘要，用于变化判断/去重
+  payloadSize: number; // 字节数，用于非法/超大请求拦截
+  version: number; // 乐观锁版本号，随每次覆盖自增
+  updatedAt: number; // 毫秒时间戳
+}
+
+export interface SetLocalSettingsSyncOptions {
+  payloadMd5: string;
+  payloadSize: number;
+  expectedVersion?: number; // 可选乐观锁：仅当当前 version 匹配时覆盖
+}
+
+export interface SetLocalSettingsSyncResult {
+  ok: boolean;
+  version: number;
+  updatedAt: number;
 }
 
 // 搜索结果数据结构
@@ -304,12 +339,16 @@ export interface SearchResult {
     sourceFormat?: string; // Emby 返回的原始字幕格式
     codec?: string;
     isExternal?: boolean;
-    renderMode?: 'native' | 'jassub';
+    renderMode?: 'native' | 'jassub' | 'bitsub';
   }>>; // 字幕列表（按集数索引）
   tmdb_id?: number; // TMDB ID
   rating?: number; // 评分
   initialEpisodeIndex?: number; // 初始集数索引（用于小雅源从文件点击进入时指定集数）
   metadataSource?: 'folder' | 'nfo' | 'tmdb' | 'file'; // 元数据来源（用于小雅源判断是否保留fileName）
+  /** OpenList 路径元信息：是否启用 14 分钟播放 URL 续期 */
+  refresh14m?: boolean;
+  /** OpenList 路径元信息：分类 */
+  category?: string;
 }
 
 // 豆瓣数据结构

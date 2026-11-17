@@ -2,10 +2,18 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 
+import type { OpenListExtraSource } from '@/lib/admin.types';
 import { getAuthInfoFromCookie } from '@/lib/auth';
 import { getConfig } from '@/lib/config';
 import { db } from '@/lib/db';
 import { OpenListClient } from '@/lib/openlist.client';
+import {
+  normalizeOpenListPath,
+  normalizePathMetaMap,
+  type OpenListPathMetaMap,
+} from '@/lib/openlist-path-meta';
+import { MAIN_SOURCE_NAME } from '@/lib/openlist-sources';
+import { normalizeApiBaseUrl } from '@/lib/url';
 
 export const runtime = 'nodejs';
 
@@ -13,19 +21,48 @@ export const runtime = 'nodejs';
  * 清理字符串中的 BOM 和其他不可见字符
  */
 function cleanPath(path: string): string {
-  // 移除 UTF-8 BOM (U+FEFF) 和其他零宽度字符
-  let cleaned = path
-    .replace(/^\uFEFF/, '') // 移除开头的 BOM
-    .replace(/\uFEFF/g, '') // 移除所有 BOM
-    .replace(/[\u200B-\u200D\uFEFF]/g, '') // 移除零宽度字符
-    .trim(); // 移除首尾空白
+  return normalizeOpenListPath(path);
+}
 
-  // 移除末尾的 /（除非路径就是 /）
-  if (cleaned.length > 1 && cleaned.endsWith('/')) {
-    cleaned = cleaned.slice(0, -1);
+function parsePathMeta(raw: unknown): OpenListPathMetaMap {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return {};
   }
+  return normalizePathMetaMap(raw as OpenListPathMetaMap);
+}
 
-  return cleaned;
+/**
+ * 规范化备用源列表：trim 名字、规范化 URL
+ */
+function normalizeExtraSources(raw: unknown): OpenListExtraSource[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((item) => ({
+    name: typeof item?.name === 'string' ? item.name.trim() : '',
+    url: normalizeApiBaseUrl(item?.url || ''),
+    username: item?.username || '',
+    password: item?.password || '',
+  }));
+}
+
+/**
+ * 找出「源名@路径」里引用了但不存在的源名。
+ * 只在 @ 前缀不含 '/' 时才当作源名（否则视为路径本身含 @）。
+ */
+function findUnknownSourceRef(
+  paths: string[],
+  knownNames: Set<string>
+): string | null {
+  for (const raw of paths) {
+    const value = (raw ?? '').toString();
+    const at = value.indexOf('@');
+    if (at <= 0) continue;
+    const name = value.slice(0, at).trim();
+    if (!name || name.includes('/')) continue;
+    if (!knownNames.has(name)) {
+      return `未知的 OpenList 源名：${name}`;
+    }
+  }
+  return null;
 }
 
 /**
@@ -52,14 +89,12 @@ export async function POST(request: NextRequest) {
       Username,
       Password,
       RootPaths,
+      ExtraSources,
       OfflineDownloadPath,
-      OfflineDownloadUseCustomSource,
-      OfflineDownloadURL,
-      OfflineDownloadUsername,
-      OfflineDownloadPassword,
       ScanInterval,
       ScanMode,
       DisableVideoPreview,
+      PathMeta,
     } = body;
 
     const authInfo = getAuthInfoFromCookie(request);
@@ -80,24 +115,60 @@ export async function POST(request: NextRequest) {
     }
 
     if (action === 'save') {
+      const cleanedPathMeta = parsePathMeta(PathMeta);
+      const normalizedURL = normalizeApiBaseUrl(URL);
+      const normalizedExtraSources = normalizeExtraSources(ExtraSources);
+      const cleanedRootPaths = Array.isArray(RootPaths)
+        ? RootPaths.map(cleanPath)
+        : [];
+      const cleanedOfflinePath = cleanPath(OfflineDownloadPath || '/') || '/';
+
+      // 源名唯一性校验
+      const seenNames = new Set<string>();
+      for (const source of normalizedExtraSources) {
+        if (!source.name) {
+          return NextResponse.json({ error: '备用源名字不能为空' }, { status: 400 });
+        }
+        if (source.name.includes('@')) {
+          return NextResponse.json(
+            { error: `备用源名字不能包含 @：${source.name}` },
+            { status: 400 }
+          );
+        }
+        if (source.name === MAIN_SOURCE_NAME) {
+          return NextResponse.json(
+            { error: `「${MAIN_SOURCE_NAME}」是主源保留名，不能用作备用源名字` },
+            { status: 400 }
+          );
+        }
+        if (seenNames.has(source.name)) {
+          return NextResponse.json(
+            { error: `备用源名字重复：${source.name}` },
+            { status: 400 }
+          );
+        }
+        seenNames.add(source.name);
+      }
+
+      const knownNames = new Set<string>([MAIN_SOURCE_NAME]);
+      seenNames.forEach((name) => knownNames.add(name));
+
       // 如果功能未启用，允许保存空配置
       if (!Enabled) {
         adminConfig.OpenListConfig = {
           Enabled: false,
-          URL: URL || '',
+          URL: normalizedURL,
           Username: Username || '',
           Password: Password || '',
-          RootPaths: RootPaths || ['/'],
-          OfflineDownloadPath: OfflineDownloadPath || '/',
-          OfflineDownloadUseCustomSource: OfflineDownloadUseCustomSource || false,
-          OfflineDownloadURL: OfflineDownloadURL || '',
-          OfflineDownloadUsername: OfflineDownloadUsername || '',
-          OfflineDownloadPassword: OfflineDownloadPassword || '',
+          RootPaths: cleanedRootPaths.length ? cleanedRootPaths : ['/'],
+          ExtraSources: normalizedExtraSources,
+          OfflineDownloadPath: cleanedOfflinePath,
           LastRefreshTime: adminConfig.OpenListConfig?.LastRefreshTime,
           ResourceCount: adminConfig.OpenListConfig?.ResourceCount,
           ScanInterval: 0,
           ScanMode: ScanMode || 'hybrid',
           DisableVideoPreview: DisableVideoPreview || false,
+          PathMeta: cleanedPathMeta,
         };
 
         await db.saveAdminConfig(adminConfig);
@@ -109,21 +180,21 @@ export async function POST(request: NextRequest) {
       }
 
       // 功能启用时，验证必填字段
-      if (!URL || !Username || !Password) {
+      if (!normalizedURL || !Username || !Password) {
         return NextResponse.json(
-          { error: '请提供 URL、账号和密码' },
+          { error: '请提供主 OpenList 的 URL、账号和密码' },
           { status: 400 }
         );
       }
 
-      if (
-        OfflineDownloadUseCustomSource &&
-        (!OfflineDownloadURL || !OfflineDownloadUsername || !OfflineDownloadPassword)
-      ) {
-        return NextResponse.json(
-          { error: '请提供离线下载 OpenList URL、账号和密码' },
-          { status: 400 }
-        );
+      // 备用源字段完整性
+      for (const source of normalizedExtraSources) {
+        if (!source.url || !source.username || !source.password) {
+          return NextResponse.json(
+            { error: `备用源「${source.name}」的 URL、账号和密码不能为空` },
+            { status: 400 }
+          );
+        }
       }
 
       // 验证 RootPaths
@@ -134,8 +205,13 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // 清理 RootPaths 中的 BOM 和不可见字符
-      const cleanedRootPaths = RootPaths.map(cleanPath);
+      // 路径前缀引用的源必须存在
+      const unknownRef =
+        findUnknownSourceRef(cleanedRootPaths, knownNames) ||
+        findUnknownSourceRef([cleanedOfflinePath], knownNames);
+      if (unknownRef) {
+        return NextResponse.json({ error: unknownRef }, { status: 400 });
+      }
 
       // 验证扫描间隔
       const scanInterval = parseInt(ScanInterval) || 0;
@@ -146,53 +222,36 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // 验证账号密码是否正确
+      // 验证主源账号密码是否正确
       try {
-        console.log('[OpenList Config] 验证账号密码');
-        await OpenListClient.login(URL, Username, Password);
-        console.log('[OpenList Config] 账号密码验证成功');
+        console.log('[OpenList Config] 验证主源账号密码');
+        await OpenListClient.login(normalizedURL, Username, Password);
+        console.log('[OpenList Config] 主源账号密码验证成功');
       } catch (error) {
-        console.error('[OpenList Config] 账号密码验证失败:', error);
+        console.error('[OpenList Config] 主源账号密码验证失败:', error);
         return NextResponse.json(
-          { error: '账号密码验证失败: ' + (error as Error).message },
+          { error: '主源账号密码验证失败: ' + (error as Error).message },
           { status: 400 }
         );
       }
 
-      if (OfflineDownloadUseCustomSource) {
-        try {
-          console.log('[OpenList Config] 验证离线下载 OpenList 账号密码');
-          await OpenListClient.login(
-            OfflineDownloadURL,
-            OfflineDownloadUsername,
-            OfflineDownloadPassword
-          );
-          console.log('[OpenList Config] 离线下载 OpenList 账号密码验证成功');
-        } catch (error) {
-          console.error('[OpenList Config] 离线下载 OpenList 账号密码验证失败:', error);
-          return NextResponse.json(
-            { error: '离线下载 OpenList 账号密码验证失败: ' + (error as Error).message },
-            { status: 400 }
-          );
-        }
-      }
+      // 备用源只做表单校验（上方字段完整性），保存时不验证连通性；
+      // 连通性由管理面板里每个备用源单独的「检测」按钮负责。
 
       adminConfig.OpenListConfig = {
         Enabled: true,
-        URL,
+        URL: normalizedURL,
         Username,
         Password,
         RootPaths: cleanedRootPaths,
-        OfflineDownloadPath: OfflineDownloadPath || '/',
-        OfflineDownloadUseCustomSource: OfflineDownloadUseCustomSource || false,
-        OfflineDownloadURL: OfflineDownloadURL || '',
-        OfflineDownloadUsername: OfflineDownloadUsername || '',
-        OfflineDownloadPassword: OfflineDownloadPassword || '',
+        ExtraSources: normalizedExtraSources,
+        OfflineDownloadPath: cleanedOfflinePath,
         LastRefreshTime: adminConfig.OpenListConfig?.LastRefreshTime,
         ResourceCount: adminConfig.OpenListConfig?.ResourceCount,
         ScanInterval: scanInterval,
         ScanMode: ScanMode || 'hybrid',
         DisableVideoPreview: DisableVideoPreview || false,
+        PathMeta: cleanedPathMeta,
       };
 
       await db.saveAdminConfig(adminConfig);
